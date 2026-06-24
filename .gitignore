@@ -1,0 +1,15 @@
+*.sqlite
+*.sqlite-shm
+*.sqlite-wal
+graph.html
+real_graph.html
+*_graph.html
+.local/
+build/
+dist/
+*.egg-info/
+__pycache__/
+.pytest_cache/
+.venv/
+.coverage
+htmlcov/

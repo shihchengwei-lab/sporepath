@@ -1,0 +1,233 @@
+from __future__ import annotations
+
+import json
+import math
+import sqlite3
+from contextlib import closing
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Iterable
+
+from .models import Edge, ThoughtAtom
+
+
+class MemoryStore:
+    def __init__(self, path: str | Path):
+        self.path = Path(path)
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        self._init_db()
+
+    def upsert_atoms(self, atoms: Iterable[ThoughtAtom]) -> int:
+        rows = list(atoms)
+        with closing(self._connect()) as con:
+            con.executemany(
+                """
+                INSERT INTO atoms (
+                    id, source, role, text, summary, kind, tags, timestamp,
+                    importance, activation, metadata, created_at, updated_at
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(id) DO UPDATE SET
+                    source = excluded.source,
+                    role = excluded.role,
+                    text = excluded.text,
+                    summary = excluded.summary,
+                    kind = excluded.kind,
+                    tags = excluded.tags,
+                    timestamp = excluded.timestamp,
+                    importance = excluded.importance,
+                    activation = max(atoms.activation, excluded.activation),
+                    metadata = excluded.metadata,
+                    updated_at = excluded.updated_at
+                """,
+                [self._atom_row(atom) for atom in rows],
+            )
+            con.commit()
+        return len(rows)
+
+    def get_atom(self, atom_id: str) -> ThoughtAtom:
+        with closing(self._connect()) as con:
+            row = con.execute("SELECT * FROM atoms WHERE id = ?", (atom_id,)).fetchone()
+        if row is None:
+            raise KeyError(atom_id)
+        return self._row_to_atom(row)
+
+    def list_atoms(self) -> list[ThoughtAtom]:
+        with closing(self._connect()) as con:
+            rows = con.execute("SELECT * FROM atoms").fetchall()
+        return [self._row_to_atom(row) for row in rows]
+
+    def list_edges(self) -> list[Edge]:
+        with closing(self._connect()) as con:
+            rows = con.execute(
+                "SELECT from_id, to_id, relation, weight, last_used FROM edges"
+            ).fetchall()
+        return [
+            Edge(
+                from_id=row["from_id"],
+                to_id=row["to_id"],
+                relation=row["relation"],
+                weight=row["weight"],
+                last_used=row["last_used"],
+            )
+            for row in rows
+        ]
+
+    def focus_atoms(self, *, limit: int = 8) -> list[ThoughtAtom]:
+        with closing(self._connect()) as con:
+            rows = con.execute(
+                """
+                SELECT * FROM atoms
+                ORDER BY activation DESC, importance DESC, COALESCE(timestamp, '') DESC
+                LIMIT ?
+                """,
+                (limit,),
+            ).fetchall()
+        return [self._row_to_atom(row) for row in rows]
+
+    def latent_candidates(self, question: str, *, limit: int = 12, active_ceiling: float = 0.45) -> list[ThoughtAtom]:
+        atoms = self.list_atoms()
+        latent = [atom for atom in atoms if atom.activation <= active_ceiling]
+        pool = latent or atoms
+        scored = sorted(
+            pool,
+            key=lambda atom: self._latent_score(question, atom),
+            reverse=True,
+        )
+        return scored[:limit]
+
+    def touch_atoms(self, atom_ids: Iterable[str], *, amount: float = 0.2) -> None:
+        ids = list(atom_ids)
+        if not ids:
+            return
+        now = _now()
+        with closing(self._connect()) as con:
+            con.executemany(
+                "UPDATE atoms SET activation = min(1.0, activation + ?), updated_at = ? WHERE id = ?",
+                [(amount, now, atom_id) for atom_id in ids],
+            )
+            con.commit()
+
+    def decay_all(self, *, factor: float = 0.92, floor: float = 0.05) -> int:
+        with closing(self._connect()) as con:
+            con.execute(
+                "UPDATE atoms SET activation = max(?, activation * ?), updated_at = ?",
+                (floor, factor, _now()),
+            )
+            changed = con.execute("SELECT changes()").fetchone()[0]
+            con.commit()
+            return changed
+
+    def rebuild_edges(self, *, min_shared_tags: int = 1) -> int:
+        atoms = self.list_atoms()
+        edges: list[Edge] = []
+        for index, left in enumerate(atoms):
+            left_tags = set(left.tags)
+            for right in atoms[index + 1 :]:
+                shared = left_tags.intersection(right.tags)
+                if len(shared) < min_shared_tags or shared == {"uncategorized"}:
+                    continue
+                weight = min(1.0, len(shared) / math.sqrt(max(len(left_tags), 1) * max(len(right.tags), 1)))
+                relation = "shared_tags:" + ",".join(sorted(shared))
+                edges.append(Edge(left.id, right.id, relation, round(weight, 3), _now()))
+
+        with closing(self._connect()) as con:
+            con.execute("DELETE FROM edges")
+            con.executemany(
+                """
+                INSERT INTO edges (from_id, to_id, relation, weight, last_used)
+                VALUES (?, ?, ?, ?, ?)
+                """,
+                [(edge.from_id, edge.to_id, edge.relation, edge.weight, edge.last_used) for edge in edges],
+            )
+            con.commit()
+        return len(edges)
+
+    def stats(self) -> dict[str, int]:
+        with closing(self._connect()) as con:
+            atoms = con.execute("SELECT COUNT(*) FROM atoms").fetchone()[0]
+            edges = con.execute("SELECT COUNT(*) FROM edges").fetchone()[0]
+        return {"atoms": atoms, "edges": edges}
+
+    def _connect(self) -> sqlite3.Connection:
+        con = sqlite3.connect(self.path)
+        con.row_factory = sqlite3.Row
+        return con
+
+    def _init_db(self) -> None:
+        with closing(self._connect()) as con:
+            con.execute(
+                """
+                CREATE TABLE IF NOT EXISTS atoms (
+                    id TEXT PRIMARY KEY,
+                    source TEXT NOT NULL,
+                    role TEXT NOT NULL,
+                    text TEXT NOT NULL,
+                    summary TEXT NOT NULL,
+                    kind TEXT NOT NULL,
+                    tags TEXT NOT NULL,
+                    timestamp TEXT,
+                    importance REAL NOT NULL,
+                    activation REAL NOT NULL,
+                    metadata TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                )
+                """
+            )
+            con.execute(
+                """
+                CREATE TABLE IF NOT EXISTS edges (
+                    from_id TEXT NOT NULL,
+                    to_id TEXT NOT NULL,
+                    relation TEXT NOT NULL,
+                    weight REAL NOT NULL,
+                    last_used TEXT,
+                    PRIMARY KEY (from_id, to_id, relation)
+                )
+                """
+            )
+            con.commit()
+
+    def _atom_row(self, atom: ThoughtAtom) -> tuple:
+        now = _now()
+        return (
+            atom.id,
+            atom.source,
+            atom.role,
+            atom.text,
+            atom.summary,
+            atom.kind,
+            json.dumps(atom.tags, ensure_ascii=False),
+            atom.timestamp,
+            atom.importance,
+            atom.activation,
+            json.dumps(atom.metadata, ensure_ascii=False),
+            now,
+            now,
+        )
+
+    def _row_to_atom(self, row: sqlite3.Row) -> ThoughtAtom:
+        return ThoughtAtom(
+            id=row["id"],
+            source=row["source"],
+            role=row["role"],
+            text=row["text"],
+            summary=row["summary"],
+            kind=row["kind"],
+            tags=json.loads(row["tags"]),
+            timestamp=row["timestamp"],
+            importance=row["importance"],
+            activation=row["activation"],
+            metadata=json.loads(row["metadata"]),
+        )
+
+    def _latent_score(self, question: str, atom: ThoughtAtom) -> float:
+        question_folded = question.casefold()
+        overlap = sum(1 for tag in atom.tags if tag.casefold() in question_folded)
+        novelty = 1.0 - min(1.0, atom.activation)
+        return (atom.importance * 0.55) + (novelty * 0.35) + (overlap * 0.1)
+
+
+def _now() -> str:
+    return datetime.now(timezone.utc).isoformat()

@@ -1,0 +1,5 @@
+{"role":"user","content":"我想做一個真正像第二大腦的工具，不是儲思盆，而是會讓想法繼續代謝。","timestamp":"2026-06-24T12:00:00"}
+{"role":"assistant","content":"最大風險是它變成漂亮廢話，所以每個靈感都要能回到舊片段和下一步驗證。","timestamp":"2026-06-24T12:01:00"}
+{"role":"user","content":"像黏菌一樣，常用路徑加粗，不用的路徑沉到潛意識，未來被新問題重新喚醒。","timestamp":"2026-06-24T12:02:00"}
+{"role":"user","content":"圍棋的神之一手不是最相似的召回，而是遠處弱連結剛好改變局面。","timestamp":"2026-01-01T12:00:00"}
+{"role":"assistant","content":"PoC 應該先用本地規則和 SQLite，只有 inspire 才交給 codex exec，不要一開始接 API。","timestamp":"2026-06-24T12:03:00"}
