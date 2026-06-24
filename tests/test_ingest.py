@@ -3,7 +3,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from latent_brain.ingest import extract_atoms_from_file
+from sporepath.ingest import extract_atoms_from_file
 
 
 class IngestTests(unittest.TestCase):

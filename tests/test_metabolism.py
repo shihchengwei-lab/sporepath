@@ -2,8 +2,8 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from latent_brain.models import ThoughtAtom
-from latent_brain.store import MemoryStore
+from sporepath.models import ThoughtAtom
+from sporepath.store import MemoryStore
 
 
 class MetabolismTests(unittest.TestCase):

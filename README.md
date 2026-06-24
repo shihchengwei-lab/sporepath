@@ -1,7 +1,12 @@
-# Latent Brain PoC
+# Sporepath
+
+[繁體中文](README.zh-TW.md)
+
+![A small Sporepath scout organizes AI chat fragments into focus paths and latent idea spores](assets/hero-mascot.png)
 
 Local-first experiment for turning AI chat history into a living memory graph.
 
+Sporepath grows the paths you use, and keeps forgotten thoughts ready to wake.
 The goal is not another note archive. The experiment is whether old chat
 fragments can become two useful layers:
 
@@ -29,8 +34,8 @@ thicken, fade, or sink into archive.
 ## Install
 
 ```powershell
-git clone https://github.com/YOUR_NAME/latent-brain-poc.git
-cd latent-brain-poc
+git clone https://github.com/shihchengwei-lab/sporepath.git
+cd sporepath
 python -m pip install -e .
 ```
 
@@ -38,7 +43,7 @@ Or run from the checkout without installing:
 
 ```powershell
 $env:PYTHONPATH = "src"
-python -m latent_brain doctor
+python -m sporepath doctor
 ```
 
 ## Quick Start
@@ -47,34 +52,38 @@ Try the included sample first:
 
 ```powershell
 $env:PYTHONPATH = "src"
-python -m latent_brain --db sample_memory.sqlite ingest examples\sample_chat.jsonl
-python -m latent_brain --db sample_memory.sqlite focus
-python -m latent_brain --db sample_memory.sqlite graph --out graph.html
+python -m sporepath --db sample_memory.sqlite ingest examples\sample_chat.jsonl
+python -m sporepath --db sample_memory.sqlite focus
+python -m sporepath --db sample_memory.sqlite graph --out graph.html
 ```
 
 Open `graph.html` in your browser.
 
 ## Import Your Own Chats
 
+For a ChatGPT export saved in your Downloads folder:
+
 ```powershell
-python -m latent_brain --db my_memory.sqlite ingest "C:\path\to\conversations.json"
-python -m latent_brain --db my_memory.sqlite stats
-python -m latent_brain --db my_memory.sqlite focus
+$chat = "$env:USERPROFILE\Downloads\conversations.json"
+python -m sporepath --db my_memory.sqlite ingest $chat
+python -m sporepath --db my_memory.sqlite stats
+python -m sporepath --db my_memory.sqlite focus
 ```
 
 Use the local model extractor on a small slice first:
 
 ```powershell
 ollama pull qwen3:1.7b
-python -m latent_brain --db qwen_trial.sqlite ingest "C:\path\to\chat.jsonl" --extractor ollama --model qwen3:1.7b --max-turns 50
-python -m latent_brain --db qwen_trial.sqlite focus --limit 20
+$chat = "$env:USERPROFILE\Downloads\chat.jsonl"
+python -m sporepath --db qwen_trial.sqlite ingest $chat --extractor ollama --model qwen3:1.7b --max-turns 50
+python -m sporepath --db qwen_trial.sqlite focus --limit 20
 ```
 
 The small model is expected to be noisy. It is a scout. Use `show` to inspect
 why it kept an atom:
 
 ```powershell
-python -m latent_brain --db qwen_trial.sqlite show <atom-id>
+python -m sporepath --db qwen_trial.sqlite show <atom-id>
 ```
 
 ## Inspiration Bridge
@@ -86,7 +95,7 @@ stdin for the prompt, runs read-only, and lowers reasoning effort for this PoC.
 Check auth first:
 
 ```powershell
-python -m latent_brain doctor
+python -m sporepath doctor
 ```
 
 You want Codex to report ChatGPT login if you intend to use subscription usage
@@ -95,19 +104,19 @@ instead of API-key billing.
 Dry run:
 
 ```powershell
-python -m latent_brain --db my_memory.sqlite inspire "I am stuck on how to validate this project" --dry-run
+python -m sporepath --db my_memory.sqlite inspire "I am stuck on how to validate this project" --dry-run
 ```
 
 Real run:
 
 ```powershell
-python -m latent_brain --db my_memory.sqlite inspire "I am stuck on how to validate this project" --focus-limit 5 --latent-limit 10
+python -m sporepath --db my_memory.sqlite inspire "I am stuck on how to validate this project" --focus-limit 5 --latent-limit 10
 ```
 
 ## Graph
 
 ```powershell
-python -m latent_brain --db my_memory.sqlite graph --out graph.html --limit 160
+python -m sporepath --db my_memory.sqlite graph --out graph.html --limit 160
 ```
 
 In the graph:

@@ -19,7 +19,7 @@ DEFAULT_DB = Path("memory.sqlite")
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(prog="latent-brain")
+    parser = argparse.ArgumentParser(prog="sporepath")
     parser.add_argument("--db", default=str(DEFAULT_DB), help="SQLite memory database path.")
     sub = parser.add_subparsers(dest="command", required=True)
 
@@ -128,8 +128,8 @@ def main(argv: list[str] | None = None) -> int:
                 "or test with examples\\sample.sqlite."
             )
             print(
-                "Example: python -m latent_brain --db my_memory.sqlite ingest "
-                "C:\\path\\to\\conversations.json"
+                "Example: python -m sporepath --db my_memory.sqlite ingest "
+                "$env:USERPROFILE\\Downloads\\conversations.json"
             )
             return 2
         prompt = build_inspiration_prompt(

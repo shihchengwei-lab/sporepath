@@ -5,9 +5,9 @@ import unittest
 from contextlib import redirect_stdout
 from pathlib import Path
 
-from latent_brain.cli import main
-from latent_brain.models import ThoughtAtom
-from latent_brain.store import MemoryStore
+from sporepath.cli import main
+from sporepath.models import ThoughtAtom
+from sporepath.store import MemoryStore
 
 
 class CliTests(unittest.TestCase):

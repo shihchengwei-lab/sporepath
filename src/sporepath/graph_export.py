@@ -44,7 +44,7 @@ def export_graph_html(store: MemoryStore, out_path: str | Path, *, limit: int = 
     out = Path(out_path)
     out.parent.mkdir(parents=True, exist_ok=True)
     payload = graph_payload(store, limit=limit)
-    html = render_graph_html(payload, title="Latent Brain Graph")
+    html = render_graph_html(payload, title="Sporepath Graph")
     out.write_text(html, encoding="utf-8")
     return out
 
@@ -240,7 +240,7 @@ aside {{
   <main class="workspace">
     <header>
       <div class="title">
-        <h1>Latent Brain Graph</h1>
+        <h1>Sporepath Graph</h1>
         <div class="subtitle">Thick focus paths, faded latent paths, clickable thought atoms.</div>
       </div>
       <div class="toolbar" role="toolbar" aria-label="Graph view">

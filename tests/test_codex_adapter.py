@@ -1,7 +1,7 @@
 import unittest
 
-from latent_brain.codex_adapter import build_inspiration_prompt
-from latent_brain.models import ThoughtAtom
+from sporepath.codex_adapter import build_inspiration_prompt
+from sporepath.models import ThoughtAtom
 
 
 class CodexAdapterTests(unittest.TestCase):

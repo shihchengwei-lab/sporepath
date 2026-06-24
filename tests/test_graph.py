@@ -2,9 +2,9 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from latent_brain.graph_export import export_graph_html, graph_payload
-from latent_brain.models import ThoughtAtom
-from latent_brain.store import MemoryStore
+from sporepath.graph_export import export_graph_html, graph_payload
+from sporepath.models import ThoughtAtom
+from sporepath.store import MemoryStore
 
 
 def make_atom(atom_id, summary, tags, activation, kind="idea"):

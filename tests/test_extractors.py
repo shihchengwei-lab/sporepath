@@ -3,8 +3,8 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from latent_brain.extractors import ExtractSignal, OllamaExtractor, parse_signal_json
-from latent_brain.ingest import extract_atoms_from_file
+from sporepath.extractors import ExtractSignal, OllamaExtractor, parse_signal_json
+from sporepath.ingest import extract_atoms_from_file
 
 
 class ExtractorTests(unittest.TestCase):

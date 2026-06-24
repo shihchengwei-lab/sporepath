@@ -1,4 +1,4 @@
-"""Latent Brain PoC."""
+"""Sporepath."""
 
 __all__ = ["__version__"]
 

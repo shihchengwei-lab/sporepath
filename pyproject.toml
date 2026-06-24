@@ -1,7 +1,7 @@
 [project]
-name = "latent-brain-poc"
+name = "sporepath"
 version = "0.1.0"
-description = "Local-first PoC for metabolizing AI chat history into focus and latent inspiration paths."
+description = "Local-first PoC for turning AI chat history into focus paths and latent idea spores."
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = []
@@ -19,7 +19,7 @@ classifiers = [
 ]
 
 [project.scripts]
-latent-brain = "latent_brain.cli:main"
+sporepath = "sporepath.cli:main"
 
 [build-system]
 requires = ["setuptools>=68"]
