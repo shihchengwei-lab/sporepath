@@ -7,7 +7,7 @@ from contextlib import redirect_stdout
 from pathlib import Path
 
 from sporepath.cli import main
-from sporepath.evaluation import build_extraction_eval, score_eval_sheet
+from sporepath.evaluation import build_extraction_eval, clean_extraction_eval, score_eval_sheet
 
 
 class EvaluationTests(unittest.TestCase):
@@ -202,6 +202,48 @@ class EvaluationTests(unittest.TestCase):
         self.assertEqual(result.cases_written, 2)
         self.assertEqual([record["text"] for record in records].count(duplicate), 1)
 
+    def test_clean_extraction_eval_dedupes_scored_rows(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            sheet = Path(tmp) / "eval.jsonl"
+            cleaned = Path(tmp) / "clean.jsonl"
+            report = Path(tmp) / "clean.md"
+            duplicate = "Add support for TSV input. Keep python3 -m pytest -q green."
+            rows = [
+                {
+                    "id": "first",
+                    "text": duplicate,
+                    "prediction": {"keep": True},
+                    "human": {"keep": True, "notes": "keep the first score"},
+                },
+                {
+                    "id": "second",
+                    "text": duplicate,
+                    "prediction": {"keep": True},
+                    "human": {"keep": False, "notes": "drop duplicate score"},
+                },
+                {
+                    "id": "third",
+                    "text": "A different reusable product judgment about onboarding friction.",
+                    "prediction": {"keep": True},
+                    "human": {"keep": True, "notes": "unique"},
+                },
+            ]
+            sheet.write_text(
+                "\n".join(json.dumps(row) for row in rows),
+                encoding="utf-8",
+            )
+
+            result = clean_extraction_eval(sheet, out_path=cleaned, report_path=report)
+            cleaned_rows = [json.loads(line) for line in cleaned.read_text(encoding="utf-8").splitlines()]
+            report_exists = report.exists()
+
+        self.assertEqual(result.total_cases, 3)
+        self.assertEqual(result.kept_cases, 2)
+        self.assertEqual(result.dropped_duplicate_count, 1)
+        self.assertEqual([row["id"] for row in cleaned_rows], ["first", "third"])
+        self.assertEqual(cleaned_rows[0]["human"]["notes"], "keep the first score")
+        self.assertTrue(report_exists)
+
     def test_build_extraction_eval_accepts_checkpoint_writes(self):
         with tempfile.TemporaryDirectory() as tmp:
             chat = Path(tmp) / "chat.jsonl"
@@ -368,6 +410,29 @@ class EvaluationTests(unittest.TestCase):
         self.assertIn("scored=1/1", stdout.getvalue())
         self.assertIn("pass_rate=100.0%", stdout.getvalue())
         self.assertIn("signal_found=100.0%", stdout.getvalue())
+
+    def test_eval_clean_cli_writes_deduped_sheet(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            sheet = Path(tmp) / "eval.jsonl"
+            cleaned = Path(tmp) / "clean.jsonl"
+            duplicate = "Add support for TSV input. Keep python3 -m pytest -q green."
+            rows = [
+                {"id": "a", "text": duplicate, "prediction": {}, "human": {"keep": True}},
+                {"id": "b", "text": duplicate, "prediction": {}, "human": {"keep": True}},
+            ]
+            sheet.write_text(
+                "\n".join(json.dumps(row) for row in rows),
+                encoding="utf-8",
+            )
+
+            stdout = io.StringIO()
+            with redirect_stdout(stdout):
+                code = main(["eval-clean", str(sheet), "--out", str(cleaned)])
+            cleaned_rows = [json.loads(line) for line in cleaned.read_text(encoding="utf-8").splitlines()]
+
+        self.assertEqual(code, 0)
+        self.assertEqual(len(cleaned_rows), 1)
+        self.assertIn("kept=1/2", stdout.getvalue())
 
 
 if __name__ == "__main__":

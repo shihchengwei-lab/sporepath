@@ -535,13 +535,24 @@ Run-Sporepath-Qwen35-Eval.bat
 
 That samples 50 allowlisted local sources with `qwen3.5:4b`, caps the sample at
 one case per file, skips near-duplicates, checkpoints after every case, and writes
-`eval\qwen35_4b_eval.jsonl` plus `eval\qwen35_4b_eval.md`.
+`eval\qwen35_4b_eval.jsonl` plus `eval\qwen35_4b_eval.md`. It then runs
+`eval-clean` and writes `eval\qwen35_4b_eval.clean.jsonl` plus
+`eval\qwen35_4b_eval.clean.md`; review and score the clean sheet first.
 
 After reviewing the Markdown, fill the `human` fields in the JSONL file, then
 summarize:
 
 ```powershell
 python -m sporepath eval-score eval\qwen_eval.jsonl
+```
+
+If the sheet contains repeated fragments, clean it without losing the `human`
+review fields:
+
+```powershell
+python -m sporepath eval-clean eval\qwen_eval.jsonl `
+  --out eval\qwen_eval.clean.jsonl `
+  --report eval\qwen_eval.clean.md
 ```
 
 The human part should stay narrow. Do not judge whether the model wrote a good
@@ -574,6 +585,12 @@ Run the checks separately:
 python -m sporepath validate-scout eval\qwen_eval.jsonl --out eval\validation_scout.md
 python -m sporepath --db my_memory.sqlite validate-notes --out eval\validation_notes.md
 python -m sporepath --db my_memory.sqlite validate-inspire --out eval\validation_inspire.md
+```
+
+Use the cleaned sheet for `validate-scout` when `eval-clean` drops duplicates:
+
+```powershell
+python -m sporepath validate-scout eval\qwen_eval.clean.jsonl --out eval\validation_scout.md
 ```
 
 Or write one combined report:

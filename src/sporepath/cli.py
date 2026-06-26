@@ -16,7 +16,7 @@ from .app_config import default_app_config
 from .automation import sync_arcrift_memory
 from .codex_adapter import build_inspiration_prompt, codex_command, parse_inspiration_suggestions, run_codex_exec
 from .digest_queue import collect_fragments_from_files, is_off_peak_window, process_digest_queue
-from .evaluation import build_extraction_eval, score_eval_sheet
+from .evaluation import build_extraction_eval, clean_extraction_eval, score_eval_sheet
 from .extractors import OllamaExtractor
 from .graph_export import export_graph_html
 from .ingest import extract_atoms_from_file
@@ -269,6 +269,15 @@ def main(argv: list[str] | None = None) -> int:
 
     eval_score = sub.add_parser("eval-score", help="Summarize a filled extraction eval JSONL sheet.")
     eval_score.add_argument("path")
+
+    eval_clean = sub.add_parser("eval-clean", help="Remove duplicate/noisy rows from an extraction eval JSONL sheet.")
+    eval_clean.add_argument("path")
+    eval_clean.add_argument("--out", required=True, help="Cleaned JSONL output path.")
+    eval_clean.add_argument("--report", default=None, help="Optional Markdown clean report path.")
+    eval_clean.add_argument("--no-dedupe", dest="dedupe", action="store_false", help="Keep near-duplicate eval cases.")
+    eval_clean.add_argument("--keep-disposable", dest="conservative_filter", action="store_false", help="Keep obvious disposable fragments.")
+    eval_clean.add_argument("--dedupe-threshold", type=float, default=0.92)
+    eval_clean.set_defaults(dedupe=True, conservative_filter=True)
 
     validate_scout_cmd = sub.add_parser("validate-scout", help="Validate a scout extraction eval JSONL sheet.")
     validate_scout_cmd.add_argument("path")
@@ -695,6 +704,24 @@ def main(argv: list[str] | None = None) -> int:
             f"noise_marked={result.noise_marked_rate:.1%} "
             f"handoff_sufficient={result.handoff_sufficient_rate:.1%}"
         )
+        return 0
+
+    if args.command == "eval-clean":
+        result = clean_extraction_eval(
+            args.path,
+            out_path=args.out,
+            report_path=args.report,
+            dedupe=args.dedupe,
+            conservative_filter=args.conservative_filter,
+            dedupe_threshold=args.dedupe_threshold,
+        )
+        print(
+            f"kept={result.kept_cases}/{result.total_cases} "
+            f"dropped_duplicates={result.dropped_duplicate_count} "
+            f"dropped_disposable={result.dropped_disposable_count}"
+        )
+        print(f"JSONL: {result.jsonl_path.resolve()}")
+        print(f"Report: {result.report_path.resolve()}")
         return 0
 
     if args.command == "validate-scout":

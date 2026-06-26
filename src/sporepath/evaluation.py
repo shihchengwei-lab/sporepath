@@ -35,6 +35,16 @@ class EvalScoreResult:
     avg_structure_quality: float
 
 
+@dataclass(frozen=True)
+class EvalCleanResult:
+    total_cases: int
+    kept_cases: int
+    dropped_duplicate_count: int
+    dropped_disposable_count: int
+    jsonl_path: Path
+    report_path: Path
+
+
 def build_extraction_eval(
     *,
     input_paths: Iterable[str | Path],
@@ -228,6 +238,57 @@ def score_eval_sheet(path: str | Path) -> EvalScoreResult:
     )
 
 
+def clean_extraction_eval(
+    path: str | Path,
+    *,
+    out_path: str | Path,
+    report_path: str | Path | None = None,
+    dedupe: bool = True,
+    conservative_filter: bool = True,
+    dedupe_threshold: float = DEFAULT_DEDUPE_THRESHOLD,
+) -> EvalCleanResult:
+    source_path = Path(path)
+    jsonl_path = Path(out_path)
+    markdown_path = Path(report_path) if report_path is not None else jsonl_path.with_suffix(".md")
+    jsonl_path.parent.mkdir(parents=True, exist_ok=True)
+    markdown_path.parent.mkdir(parents=True, exist_ok=True)
+
+    records = _read_jsonl(source_path)
+    fragment_filter = FragmentFilter(
+        dedupe=dedupe,
+        conservative=conservative_filter,
+        threshold=dedupe_threshold,
+    )
+    kept: list[dict[str, Any]] = []
+    dropped: list[dict[str, str]] = []
+
+    for record in records:
+        text = str(record.get("text", ""))
+        decision = fragment_filter.keep(text)
+        if decision.keep:
+            kept.append(record)
+        else:
+            dropped.append(
+                {
+                    "id": str(record.get("id", "")),
+                    "source": str(record.get("source", "")),
+                    "reason": decision.reason,
+                    "text": text,
+                }
+            )
+
+    _write_jsonl(jsonl_path, kept)
+    _write_clean_markdown(markdown_path, source_path, kept, dropped)
+    return EvalCleanResult(
+        total_cases=len(records),
+        kept_cases=len(kept),
+        dropped_duplicate_count=sum(1 for row in dropped if row["reason"] == "near-duplicate"),
+        dropped_disposable_count=sum(1 for row in dropped if row["reason"] == "disposable-fragment"),
+        jsonl_path=jsonl_path,
+        report_path=markdown_path,
+    )
+
+
 def _predict(text: str, *, role: str, extractor: Extractor | None) -> dict[str, Any]:
     if extractor is None:
         kind = classify_kind(text)
@@ -341,6 +402,33 @@ def _write_markdown(path: Path, records: list[dict[str, Any]]) -> None:
                 "",
             ]
         )
+    path.write_text("\n".join(lines), encoding="utf-8")
+
+
+def _write_clean_markdown(
+    path: Path,
+    source_path: Path,
+    kept: list[dict[str, Any]],
+    dropped: list[dict[str, str]],
+) -> None:
+    lines = [
+        "# Sporepath Cleaned Scout Eval",
+        "",
+        f"- Source eval: `{source_path}`",
+        f"- Kept cases: {len(kept)}",
+        f"- Dropped cases: {len(dropped)}",
+        "",
+    ]
+    if dropped:
+        lines.extend(["## Dropped Cases", ""])
+        for row in dropped:
+            preview = row["text"].replace("\n", " ")[:240]
+            lines.extend(
+                [
+                    f"- `{row['id'] or '(no id)'}` reason=`{row['reason']}` source=`{row['source']}`",
+                    f"  - {preview}",
+                ]
+            )
     path.write_text("\n".join(lines), encoding="utf-8")
 
 

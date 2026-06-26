@@ -90,6 +90,8 @@ class LauncherTests(unittest.TestCase):
         self.assertIn("--dedupe-threshold", text)
         self.assertIn("qwen3.5:4b", text)
         self.assertIn("eval\\qwen35_4b_eval.jsonl", text)
+        self.assertIn("eval-clean", text)
+        self.assertIn("eval\\qwen35_4b_eval.clean.jsonl", text)
 
     def test_auto_launcher_starts_queue_worker(self):
         launcher = ROOT / "Sporepath-Auto.bat"

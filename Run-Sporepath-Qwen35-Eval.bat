@@ -5,6 +5,8 @@ set "PYTHONPATH=src"
 set "SPOREPATH_EVAL_MODEL=qwen3.5:4b"
 set "SPOREPATH_EVAL_OUT=eval\qwen35_4b_eval.jsonl"
 set "SPOREPATH_EVAL_REPORT=eval\qwen35_4b_eval.md"
+set "SPOREPATH_EVAL_CLEAN_OUT=eval\qwen35_4b_eval.clean.jsonl"
+set "SPOREPATH_EVAL_CLEAN_REPORT=eval\qwen35_4b_eval.clean.md"
 set "SPOREPATH_EVAL_LIMIT=50"
 set "SPOREPATH_EVAL_PER_FILE_LIMIT=1"
 set "SPOREPATH_EVAL_CHECKPOINT_EVERY=1"
@@ -41,3 +43,10 @@ python -m sporepath eval-extract ^
   --ollama-num-predict "%SPOREPATH_OLLAMA_NUM_PREDICT%" ^
   --out "%SPOREPATH_EVAL_OUT%" ^
   --report "%SPOREPATH_EVAL_REPORT%"
+
+if errorlevel 1 exit /b %errorlevel%
+
+python -m sporepath eval-clean "%SPOREPATH_EVAL_OUT%" ^
+  --out "%SPOREPATH_EVAL_CLEAN_OUT%" ^
+  --report "%SPOREPATH_EVAL_CLEAN_REPORT%" ^
+  --dedupe-threshold "%SPOREPATH_EVAL_DEDUPE_THRESHOLD%"

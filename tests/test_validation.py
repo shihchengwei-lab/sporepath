@@ -35,8 +35,8 @@ class ValidationTests(unittest.TestCase):
             sheet = Path(tmp) / "eval.jsonl"
             rows = [
                 {
-                    "id": "good",
-                    "text": "A useful memory",
+                    "id": f"good-{index}",
+                    "text": f"A useful memory {index}",
                     "prediction": {
                         "keep": True,
                         "route": "debug",
@@ -51,7 +51,10 @@ class ValidationTests(unittest.TestCase):
                         "handoff_sufficient": True,
                         "useful": True,
                     },
-                },
+                }
+                for index in range(29)
+            ]
+            rows.append(
                 {
                     "id": "parse-error",
                     "text": "Important but failed",
@@ -69,7 +72,39 @@ class ValidationTests(unittest.TestCase):
                         "handoff_sufficient": False,
                         "useful": False,
                     },
-                },
+                }
+            )
+            sheet.write_text(
+                "\n".join(json.dumps(row, ensure_ascii=False) for row in rows),
+                encoding="utf-8",
+            )
+
+            result = validate_scout(sheet)
+
+        self.assertEqual(result.metrics["total_cases"], 30)
+        self.assertEqual(result.metrics["parse_error_count"], 1)
+        self.assertEqual(result.metrics["false_negative_count"], 1)
+        self.assertEqual(result.verdict, "fail")
+        self.assertIn("Scout Validator", result.markdown)
+
+    def test_validate_scout_needs_enough_scored_cases(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            sheet = Path(tmp) / "eval.jsonl"
+            rows = [
+                {
+                    "id": f"case-{index}",
+                    "text": f"Useful unique memory fragment {index}",
+                    "prediction": {"keep": True, "route": "idea", "tags": [], "handoff": "Use later."},
+                    "human": {
+                        "keep": True,
+                        "route": "idea",
+                        "signal_found": True,
+                        "noise_marked": True,
+                        "handoff_sufficient": True,
+                        "useful": True,
+                    },
+                }
+                for index in range(5)
             ]
             sheet.write_text(
                 "\n".join(json.dumps(row, ensure_ascii=False) for row in rows),
@@ -78,11 +113,8 @@ class ValidationTests(unittest.TestCase):
 
             result = validate_scout(sheet)
 
-        self.assertEqual(result.metrics["total_cases"], 2)
-        self.assertEqual(result.metrics["parse_error_count"], 1)
-        self.assertEqual(result.metrics["false_negative_count"], 1)
-        self.assertEqual(result.verdict, "fail")
-        self.assertIn("Scout Validator", result.markdown)
+        self.assertEqual(result.verdict, "needs_data")
+        self.assertEqual(result.metrics["minimum_scored_cases"], 30)
 
     def test_validate_notes_checks_sources_and_empty_notes(self):
         with tempfile.TemporaryDirectory() as tmp:

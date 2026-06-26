@@ -13,6 +13,7 @@ from .store import MemoryStore
 
 
 POSITIVE_INSPIRE_STATUSES = {"selected", "useful", "applied"}
+MINIMUM_SCOUT_SCORED_CASES = 30
 
 
 @dataclass(frozen=True)
@@ -48,6 +49,7 @@ def validate_scout(path: str | Path) -> ValidationResult:
     metrics = {
         "total_cases": total,
         "scored_cases": score.scored_cases,
+        "minimum_scored_cases": MINIMUM_SCOUT_SCORED_CASES,
         "pass_rate": score.pass_rate,
         "keep_agreement": score.keep_agreement,
         "route_agreement": score.route_agreement,
@@ -61,7 +63,7 @@ def validate_scout(path: str | Path) -> ValidationResult:
         "false_negative_count": false_negative_count,
         "false_negative_rate": _ratio(false_negative_count, score.scored_cases),
     }
-    if total == 0 or score.scored_cases == 0:
+    if total == 0 or score.scored_cases < MINIMUM_SCOUT_SCORED_CASES:
         verdict = "needs_data"
     elif (
         metrics["parse_error_rate"] <= 0.03
@@ -249,6 +251,7 @@ def _render_scout_markdown(path: Path, verdict: str, metrics: dict[str, Any]) ->
             f"- Eval sheet: `{path}`",
             f"- Verdict: `{verdict}`",
             f"- Cases: {metrics['scored_cases']}/{metrics['total_cases']} scored",
+            f"- Minimum scored cases: {metrics['minimum_scored_cases']}",
             f"- Pass rate: {_pct(metrics['pass_rate'])}",
             f"- Handoff sufficient: {_pct(metrics['handoff_sufficient_rate'])}",
             f"- Parse errors: {metrics['parse_error_count']} ({_pct(metrics['parse_error_rate'])})",
