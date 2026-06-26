@@ -379,6 +379,18 @@ class MemoryStore:
             con.commit()
         return run_id
 
+    def latest_inspire_run_id(self) -> str | None:
+        with closing(self._connect()) as con:
+            row = con.execute(
+                """
+                SELECT id
+                FROM inspire_runs
+                ORDER BY datetime(created_at) DESC, rowid DESC
+                LIMIT 1
+                """
+            ).fetchone()
+        return str(row["id"]) if row is not None else None
+
     def record_inspire_suggestions(self, run_id: str, suggestions: Iterable[dict[str, object]]) -> int:
         rows = []
         for suggestion in suggestions:

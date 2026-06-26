@@ -516,6 +516,96 @@ class CliTests(unittest.TestCase):
         self.assertIn("suggestion=1", out.getvalue())
         self.assertEqual(edges[0].relation, "inspire_feedback")
 
+    def test_inspire_feedback_command_accepts_latest_run_alias(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            db = Path(tmp) / "memory.sqlite"
+            store = MemoryStore(db)
+            store.upsert_atoms(
+                [
+                    ThoughtAtom(
+                        id="old",
+                        source="sample.jsonl:line[1]",
+                        role="user",
+                        text="Older focus atom.",
+                        summary="Older focus",
+                        kind="idea",
+                        tags=["old"],
+                        timestamp=None,
+                        importance=0.5,
+                        activation=0.2,
+                        metadata={},
+                    ),
+                    ThoughtAtom(
+                        id="focus",
+                        source="sample.jsonl:line[2]",
+                        role="user",
+                        text="Current focus atom.",
+                        summary="Current focus",
+                        kind="idea",
+                        tags=["focus"],
+                        timestamp=None,
+                        importance=0.5,
+                        activation=0.2,
+                        metadata={},
+                    ),
+                    ThoughtAtom(
+                        id="latent",
+                        source="sample.jsonl:line[3]",
+                        role="user",
+                        text="Useful latent atom.",
+                        summary="Useful latent",
+                        kind="idea",
+                        tags=["latent"],
+                        timestamp=None,
+                        importance=0.5,
+                        activation=0.1,
+                        metadata={},
+                    ),
+                ]
+            )
+            store.record_inspire_run(
+                question="older question",
+                focus_atom_ids=["old"],
+                latent_atom_ids=["latent"],
+                output_text="older",
+            )
+            latest_run_id = store.record_inspire_run(
+                question="latest question",
+                focus_atom_ids=["focus"],
+                latent_atom_ids=["latent"],
+                output_text="suggestion_id: 1\ncited_atom_ids: [focus, latent]",
+            )
+            store.record_inspire_suggestions(
+                latest_run_id,
+                [
+                    {
+                        "suggestion_id": "1",
+                        "cited_atom_ids": ["focus", "latent"],
+                        "text": "Use the latest bridge.",
+                    }
+                ],
+            )
+
+            out = io.StringIO()
+            with redirect_stdout(out):
+                code = main(
+                    [
+                        "--db",
+                        str(db),
+                        "inspire-feedback",
+                        "latest",
+                        "--status",
+                        "useful",
+                        "--suggestion",
+                        "1",
+                    ]
+                )
+            edges = MemoryStore(db).list_edges()
+
+        self.assertEqual(code, 0)
+        self.assertIn(f"run={latest_run_id}", out.getvalue())
+        self.assertEqual({edges[0].from_id, edges[0].to_id}, {"focus", "latent"})
+
 
 if __name__ == "__main__":
     unittest.main()

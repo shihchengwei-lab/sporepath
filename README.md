@@ -450,6 +450,15 @@ includes `suggestion_id` and `cited_atom_ids`, Sporepath stores that mapping so
 you can mark a useful idea without retyping atom ids:
 
 ```powershell
+python -m sporepath --db my_memory.sqlite inspire-feedback latest `
+  --status useful `
+  --suggestion 1 `
+  --note "This bridge changed the next step"
+```
+
+Use an explicit run id when you are marking an older run:
+
+```powershell
 python -m sporepath --db my_memory.sqlite inspire-feedback <run-id> `
   --status useful `
   --suggestion 1 `

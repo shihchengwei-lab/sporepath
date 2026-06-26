@@ -319,7 +319,7 @@ def main(argv: list[str] | None = None) -> int:
     inspire.add_argument("--timeout-s", type=int, default=300)
 
     inspire_feedback = sub.add_parser("inspire-feedback", help="Mark an inspire result as useful/applied and strengthen selected bridges.")
-    inspire_feedback.add_argument("run_id")
+    inspire_feedback.add_argument("run_id", help="Inspire run id, or 'latest' for the most recent run.")
     inspire_feedback.add_argument("--status", required=True, choices=["selected", "useful", "applied", "boring", "wrong", "ignored"])
     inspire_feedback.add_argument("--atoms", nargs="+", default=None, help="Atom ids cited by the selected idea.")
     inspire_feedback.add_argument("--suggestion", default=None, help="Suggestion id printed inside the inspire result.")
@@ -849,9 +849,16 @@ def main(argv: list[str] | None = None) -> int:
         return result.returncode
 
     if args.command == "inspire-feedback":
+        run_id = args.run_id
+        if run_id.strip().casefold() == "latest":
+            latest_run_id = store.latest_inspire_run_id()
+            if latest_run_id is None:
+                print("no inspire runs found; run inspire first.", file=sys.stderr)
+                return 2
+            run_id = latest_run_id
         try:
             result = store.apply_inspire_feedback(
-                args.run_id,
+                run_id,
                 atom_ids=args.atoms,
                 suggestion_id=args.suggestion,
                 status=args.status,
@@ -861,7 +868,7 @@ def main(argv: list[str] | None = None) -> int:
         except (KeyError, ValueError) as exc:
             print(str(exc), file=sys.stderr)
             return 2
-        parts = ["Inspire feedback recorded:", f"status={args.status}"]
+        parts = ["Inspire feedback recorded:", f"run={run_id}", f"status={args.status}"]
         if args.suggestion:
             parts.append(f"suggestion={args.suggestion}")
         parts.extend(
