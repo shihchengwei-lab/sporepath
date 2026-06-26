@@ -3,9 +3,9 @@ from __future__ import annotations
 import os
 import threading
 from pathlib import Path
-from tkinter import BOTH, END, LEFT, RIGHT, Button, Entry, Frame, Label, StringVar, Text, Tk, Toplevel, filedialog
+from tkinter import BOTH, END, LEFT, RIGHT, Button, Entry, Frame, Label, Radiobutton, StringVar, Text, Tk, Toplevel, filedialog
 
-from .app_config import AppConfig
+from .app_config import AppConfig, save_app_config
 from .automation import sync_arcrift_memory
 from .codex_adapter import build_inspiration_prompt, parse_inspiration_suggestions, run_codex_exec
 from .digest_queue import collect_fragments_from_files, process_digest_queue
@@ -18,6 +18,7 @@ from .vault_export import export_obsidian_vault, sync_obsidian_vault
 
 
 PRIMARY_ACTION_LABELS = ("Sync Vault", "Debug", "Inspire")
+INSPIRE_RATING_OPTIONS = (("up", "👍", "useful"), ("down", "👎", "wrong"))
 DEBUG_ACTION_LABELS = (
     "Auto-detect Sources",
     "Import ArcRift",
@@ -30,6 +31,25 @@ DEBUG_ACTION_LABELS = (
 
 def should_show_feedback_controls(run_id: str | None, suggestion_count: int) -> bool:
     return bool(run_id) and suggestion_count > 0
+
+
+def feedback_status_from_rating(rating: str) -> str:
+    if not rating:
+        return "ignored"
+    for value, _label, status in INSPIRE_RATING_OPTIONS:
+        if rating == value:
+            return status
+    raise ValueError(f"unsupported inspire rating: {rating}")
+
+
+def feedback_statuses_for_suggestions(
+    suggestion_ids: list[str],
+    ratings: dict[str, str],
+) -> dict[str, str]:
+    return {
+        suggestion_id: feedback_status_from_rating(ratings.get(suggestion_id, ""))
+        for suggestion_id in suggestion_ids
+    }
 
 
 def run_app(config: AppConfig) -> None:
@@ -49,10 +69,11 @@ class SporepathApp(Frame):
         self.arcrift_var = StringVar(value=str(config.arcrift_path or ""))
         self.vault_var = StringVar(value=str(config.vault_path))
         self.graph_var = StringVar(value=str(config.graph_path))
-        self.suggestion_var = StringVar(value="1")
         self.detected_source_paths: list[Path] = []
         self.last_inspire_run_id: str | None = None
         self.last_inspire_suggestion_count = 0
+        self.last_inspire_suggestion_ids: list[str] = []
+        self.feedback_vars: dict[str, StringVar] = {}
         self.debug_window: Toplevel | None = None
         self.feedback_row: Frame
         self.inspire_row: Frame
@@ -76,9 +97,6 @@ class SporepathApp(Frame):
 
         self.feedback_row = Frame(self)
         self.feedback_row.pack(fill="x", pady=(0, 12))
-        Label(self.feedback_row, text="Suggestion id").pack(side=LEFT, padx=(0, 4))
-        Entry(self.feedback_row, textvariable=self.suggestion_var, width=8).pack(side=LEFT, padx=(0, 8))
-        Button(self.feedback_row, text="Mark Useful", command=self.mark_inspire_useful).pack(side=LEFT)
         self.feedback_row.pack_forget()
 
         self.output_label = Label(self, text="Output")
@@ -137,6 +155,7 @@ class SporepathApp(Frame):
             Button(debug_row, text=label, command=command).pack(side=LEFT, padx=(0, 8))
 
     def _close_debug_panel(self) -> None:
+        self.save_settings()
         if self.debug_window is not None and self.debug_window.winfo_exists():
             self.debug_window.destroy()
         self.debug_window = None
@@ -144,6 +163,19 @@ class SporepathApp(Frame):
     def _show_feedback_controls(self) -> None:
         if not should_show_feedback_controls(self.last_inspire_run_id, self.last_inspire_suggestion_count):
             return
+        for child in self.feedback_row.winfo_children():
+            child.destroy()
+        self.feedback_vars = {}
+        Label(self.feedback_row, text="Rate inspire suggestions").pack(anchor="w")
+        for suggestion_id in self.last_inspire_suggestion_ids:
+            rating_var = StringVar(value="")
+            self.feedback_vars[suggestion_id] = rating_var
+            row = Frame(self.feedback_row)
+            row.pack(fill="x", pady=2)
+            Label(row, text=f"Suggestion {suggestion_id}", width=14, anchor="w").pack(side=LEFT)
+            for value, label, _status in INSPIRE_RATING_OPTIONS:
+                Radiobutton(row, text=label, variable=rating_var, value=value).pack(side=LEFT, padx=(0, 8))
+        Button(self.feedback_row, text="Submit Feedback", command=self.submit_inspire_feedback).pack(anchor="w", pady=(6, 0))
         if not self.feedback_row.winfo_ismapped():
             self.feedback_row.pack(fill="x", pady=(0, 12), before=self.output_label)
 
@@ -154,11 +186,27 @@ class SporepathApp(Frame):
         path = filedialog.askopenfilename()
         if path:
             variable.set(path)
+            self.save_settings()
 
     def _browse_dir(self, variable: StringVar) -> None:
         path = filedialog.askdirectory()
         if path:
             variable.set(path)
+            self.save_settings()
+
+    def _current_config(self) -> AppConfig:
+        input_text = self.input_var.get().strip()
+        arcrift_text = self.arcrift_var.get().strip()
+        return AppConfig(
+            db_path=Path(self.db_var.get()),
+            input_path=Path(input_text) if input_text else None,
+            arcrift_path=Path(arcrift_text) if arcrift_text else None,
+            vault_path=Path(self.vault_var.get()),
+            graph_path=Path(self.graph_var.get()),
+        )
+
+    def save_settings(self) -> None:
+        save_app_config(self._current_config(), base_dir=Path.cwd())
 
     def refresh_now(self) -> None:
         self._run_background(self._refresh_worker)
@@ -177,6 +225,7 @@ class SporepathApp(Frame):
             self._write(f"- {source.label}: {source.path}\n")
 
     def open_vault(self) -> None:
+        self.save_settings()
         vault = Path(self.vault_var.get())
         vault.mkdir(parents=True, exist_ok=True)
         os.startfile(vault)
@@ -188,6 +237,7 @@ class SporepathApp(Frame):
     def inspire(self) -> None:
         self.last_inspire_run_id = None
         self.last_inspire_suggestion_count = 0
+        self.last_inspire_suggestion_ids = []
         self._hide_feedback_controls()
         self._run_background(self._inspire_worker, after_success=self._show_feedback_controls)
 
@@ -197,10 +247,14 @@ class SporepathApp(Frame):
     def run_queue_batch(self) -> None:
         self._run_background(self._queue_batch_worker)
 
-    def mark_inspire_useful(self) -> None:
+    def submit_inspire_feedback(self) -> None:
         run_id = self.last_inspire_run_id
-        suggestion_id = self.suggestion_var.get().strip()
-        self._run_background(lambda: self._feedback_worker(run_id, suggestion_id))
+        raw_ratings = {
+            suggestion_id: rating_var.get()
+            for suggestion_id, rating_var in self.feedback_vars.items()
+        }
+        statuses = feedback_statuses_for_suggestions(self.last_inspire_suggestion_ids, raw_ratings)
+        self._run_background(lambda: self._feedback_worker(run_id, statuses))
 
     def _refresh_worker(self) -> str:
         input_text = self.input_var.get().strip()
@@ -321,6 +375,7 @@ class SporepathApp(Frame):
             store.touch_atoms([atom.id for atom in focus_atoms + latent_atoms[:3]], amount=0.08)
             self.last_inspire_run_id = run_id
             self.last_inspire_suggestion_count = suggestion_count
+            self.last_inspire_suggestion_ids = [str(suggestion["suggestion_id"]) for suggestion in suggestions]
             suggestion_ids = ",".join(str(suggestion["suggestion_id"]) for suggestion in suggestions)
             suffix = f" suggestions={suggestion_ids}" if suggestion_count else ""
             result_text = f"{result.stdout}\n\ninspire_run={run_id}{suffix}\n"
@@ -330,25 +385,34 @@ class SporepathApp(Frame):
             return result_text + "\n" + result.stderr
         return result_text
 
-    def _feedback_worker(self, run_id: str | None, suggestion_id: str) -> str:
+    def _feedback_worker(self, run_id: str | None, statuses: dict[str, str]) -> str:
         if not run_id:
-            return "Run Inspire first, then mark a suggestion useful.\n"
-        if not suggestion_id:
-            return "Type the suggestion id to mark.\n"
-        result = MemoryStore(self.db_var.get()).apply_inspire_feedback(
-            run_id,
-            suggestion_id=suggestion_id,
-            status="useful",
-            note="marked useful from desktop app",
-        )
+            return "Run Inspire first, then submit feedback.\n"
+        if not statuses:
+            return "Run Inspire first, then submit feedback.\n"
+        store = MemoryStore(self.db_var.get())
+        atoms_touched = 0
+        bridges_strengthened = 0
+        recorded = 0
+        for suggestion_id, status in statuses.items():
+            result = store.apply_inspire_feedback(
+                run_id,
+                suggestion_id=suggestion_id,
+                status=status,
+            )
+            recorded += 1
+            atoms_touched += result["atoms_touched"]
+            bridges_strengthened += result["bridges_strengthened"]
         return (
             "Inspire feedback recorded.\n"
-            f"run={run_id} suggestion={suggestion_id} "
-            f"atoms_touched={result['atoms_touched']} "
-            f"bridges_strengthened={result['bridges_strengthened']}\n"
+            f"run={run_id} ratings={recorded} "
+            f"atoms_touched={atoms_touched} "
+            f"bridges_strengthened={bridges_strengthened}\n"
         )
 
     def _run_background(self, func, *, after_success=None) -> None:
+        self.save_settings()
+
         def runner() -> None:
             success = True
             try:

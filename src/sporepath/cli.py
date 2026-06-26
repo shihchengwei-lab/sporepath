@@ -12,7 +12,7 @@ from datetime import datetime
 from pathlib import Path
 
 from .arcrift_import import extract_atoms_from_arcrift_db
-from .app_config import default_app_config
+from .app_config import default_app_config, load_app_config
 from .automation import sync_arcrift_memory
 from .codex_adapter import build_inspiration_prompt, codex_command, parse_inspiration_suggestions, run_codex_exec
 from .digest_queue import collect_fragments_from_files, is_off_peak_window, process_digest_queue
@@ -786,6 +786,7 @@ def main(argv: list[str] | None = None) -> int:
             print(f"vault={config.vault_path}")
             print(f"graph={config.graph_path}")
             return 0
+        config = load_app_config(config, base_dir=Path.cwd())
         from .app import run_app
 
         run_app(config)

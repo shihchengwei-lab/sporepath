@@ -238,12 +238,11 @@ class ValidationTests(unittest.TestCase):
         self.assertEqual(result.metrics["runs_count"], 1)
         self.assertEqual(result.metrics["suggestions_count"], 1)
         self.assertEqual(result.metrics["positive_feedback_count"], 1)
-        self.assertEqual(result.metrics["positive_feedback_with_note_count"], 1)
         self.assertEqual(result.metrics["inspire_run_event_count"], 1)
         self.assertEqual(result.metrics["inspire_feedback_event_count"], 1)
         self.assertEqual(result.verdict, "pass")
 
-    def test_validate_inspire_rejects_positive_feedback_without_note(self):
+    def test_validate_inspire_accepts_structured_feedback_without_note(self):
         with tempfile.TemporaryDirectory() as tmp:
             store = MemoryStore(Path(tmp) / "memory.sqlite")
             store.upsert_atoms([atom("focus", activation=0.8), atom("latent", activation=0.1)])
@@ -264,12 +263,15 @@ class ValidationTests(unittest.TestCase):
                 ],
             )
             store.apply_inspire_feedback(run_id, suggestion_id="1", status="useful")
+            store.apply_inspire_feedback(run_id, suggestion_id="1", status="wrong")
+            store.apply_inspire_feedback(run_id, suggestion_id="1", status="ignored")
 
             result = validate_inspire(store)
 
         self.assertEqual(result.metrics["positive_feedback_count"], 1)
-        self.assertEqual(result.metrics["positive_feedback_with_note_count"], 0)
-        self.assertEqual(result.verdict, "fail")
+        self.assertEqual(result.metrics["negative_feedback_count"], 1)
+        self.assertEqual(result.metrics["ignored_feedback_count"], 1)
+        self.assertEqual(result.verdict, "pass")
 
     def test_validate_report_combines_sections(self):
         with tempfile.TemporaryDirectory() as tmp:

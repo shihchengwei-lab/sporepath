@@ -13,6 +13,7 @@ from .store import MemoryStore
 
 
 POSITIVE_INSPIRE_STATUSES = {"selected", "useful", "applied"}
+NEGATIVE_INSPIRE_STATUSES = {"boring", "wrong"}
 MINIMUM_SCOUT_SCORED_CASES = 30
 
 
@@ -143,7 +144,7 @@ def validate_inspire(store: MemoryStore) -> ValidationResult:
         suggestions = con.execute(
             "SELECT run_id, suggestion_id, cited_atom_ids FROM inspire_suggestions"
         ).fetchall()
-        feedback = con.execute("SELECT run_id, status, note FROM inspire_feedback").fetchall()
+        feedback = con.execute("SELECT run_id, status FROM inspire_feedback").fetchall()
         usage_events = con.execute(
             "SELECT event, COUNT(*) AS count FROM usage_events GROUP BY event"
         ).fetchall()
@@ -153,8 +154,11 @@ def validate_inspire(store: MemoryStore) -> ValidationResult:
     positive_feedback = [
         row for row in feedback if str(row["status"]).casefold() in POSITIVE_INSPIRE_STATUSES
     ]
-    positive_feedback_with_note = [
-        row for row in positive_feedback if str(row["note"] or "").strip()
+    negative_feedback = [
+        row for row in feedback if str(row["status"]).casefold() in NEGATIVE_INSPIRE_STATUSES
+    ]
+    ignored_feedback = [
+        row for row in feedback if str(row["status"]).casefold() == "ignored"
     ]
     usage_event_counts = {str(row["event"]): int(row["count"]) for row in usage_events}
     latent_by_run = {
@@ -174,10 +178,8 @@ def validate_inspire(store: MemoryStore) -> ValidationResult:
         "suggestions_count": suggestions_count,
         "feedback_count": len(feedback),
         "positive_feedback_count": len(positive_feedback),
-        "positive_feedback_with_note_count": len(positive_feedback_with_note),
-        "positive_feedback_with_note_rate": _ratio(
-            len(positive_feedback_with_note), len(positive_feedback)
-        ),
+        "negative_feedback_count": len(negative_feedback),
+        "ignored_feedback_count": len(ignored_feedback),
         "runs_with_feedback": len(feedback_run_ids.intersection(run_ids)),
         "runs_with_feedback_rate": _ratio(len(feedback_run_ids.intersection(run_ids)), runs_count),
         "positive_feedback_per_run": _ratio(len(positive_feedback), runs_count),
@@ -190,10 +192,7 @@ def validate_inspire(store: MemoryStore) -> ValidationResult:
     }
     if runs_count == 0:
         verdict = "needs_data"
-    elif (
-        metrics["positive_feedback_per_run"] >= 0.25
-        and metrics["positive_feedback_with_note_rate"] >= 0.75
-    ):
+    elif metrics["positive_feedback_per_run"] >= 0.25:
         verdict = "pass"
     else:
         verdict = "fail"
@@ -318,13 +317,14 @@ def _render_inspire_markdown(verdict: str, metrics: dict[str, Any]) -> str:
             f"- Suggestions: {metrics['suggestions_count']}",
             f"- Feedback: {metrics['feedback_count']}",
             f"- Positive feedback: {metrics['positive_feedback_count']}",
-            f"- Positive feedback with note: {metrics['positive_feedback_with_note_count']} ({_pct(metrics['positive_feedback_with_note_rate'])})",
+            f"- Negative feedback: {metrics['negative_feedback_count']}",
+            f"- Ignored feedback: {metrics['ignored_feedback_count']}",
             f"- Runs with feedback: {metrics['runs_with_feedback']} ({_pct(metrics['runs_with_feedback_rate'])})",
             f"- Positive feedback per run: {_pct(metrics['positive_feedback_per_run'])}",
             f"- Latent citation rate: {_pct(metrics['latent_citation_rate'])}",
             f"- Usage events: {metrics['usage_events_count']} (runs={metrics['inspire_run_event_count']}, feedback={metrics['inspire_feedback_event_count']})",
             "",
-            "Target: at least 25% positive feedback per inspire run, with notes on at least 75% of positive feedback. No runs means this validator needs real usage data.",
+            "Target: at least 25% positive feedback per inspire run. No runs means this validator needs real usage data.",
         ]
     )
 

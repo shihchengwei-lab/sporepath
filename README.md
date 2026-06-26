@@ -79,7 +79,7 @@ The main window keeps the daily surface small:
 
 - **Sync Vault**: treat edited Obsidian notes as usage feedback and thicken their source atoms.
 - **Inspire**: enter a stuck question and ask Codex for weird-but-bridged next moves.
-- **Mark Useful**: appears only after an `Inspire` run returns suggestion ids; use it to thicken the bridge that actually helped.
+- **Rate Suggestions**: appears only after an `Inspire` run returns suggestion ids; mark each suggestion 👍, 👎, or leave it unselected before submitting structured feedback.
 - **Debug**: opens the maintenance panel.
 
 The **Debug** panel holds the manual recovery and setup actions:
@@ -456,8 +456,7 @@ you can mark a useful idea without retyping atom ids:
 ```powershell
 python -m sporepath --db my_memory.sqlite inspire-feedback latest `
   --status useful `
-  --suggestion 1 `
-  --note "This bridge changed the next step"
+  --suggestion 1
 ```
 
 Use an explicit run id when you are marking an older run:
@@ -465,8 +464,7 @@ Use an explicit run id when you are marking an older run:
 ```powershell
 python -m sporepath --db my_memory.sqlite inspire-feedback <run-id> `
   --status useful `
-  --suggestion 1 `
-  --note "This bridge changed the next step"
+  --suggestion 1
 ```
 
 You can still mark a bridge manually by passing the cited atoms:
@@ -474,16 +472,14 @@ You can still mark a bridge manually by passing the cited atoms:
 ```powershell
 python -m sporepath --db my_memory.sqlite inspire-feedback <run-id> `
   --status useful `
-  --atoms <atom-id-1> <atom-id-2> `
-  --note "This bridge changed the next step"
+  --atoms <atom-id-1> <atom-id-2>
 ```
 
 Positive feedback statuses are `selected`, `useful`, and `applied`. They thicken
 the selected atoms and add or strengthen an `inspire_feedback` bridge between
 them. `boring`, `wrong`, and `ignored` are recorded but do not thicken the path.
-Positive feedback should include a short `--note`; `validate-inspire` requires
-notes on most positive feedback so empty "useful" clicks do not qualify the
-workflow by themselves. Inspire runs and feedback also write local
+The desktop app uses 👍 as `useful`, 👎 as `wrong`, and an unselected submitted
+suggestion as `ignored`. Inspire runs and feedback also write local
 `usage_events` rows as an auditable trail.
 
 ## Graph
@@ -599,8 +595,7 @@ three narrower checks:
 - **Note usability**: digested notes are not empty, keep their source anchors,
   and do not collapse into duplicate titles.
 - **Inspire feedback**: `inspire` runs produce suggestions that you actually
-  mark as useful often enough to justify the workflow. Positive feedback needs
-  a short reason note, not just a bare click.
+  mark as useful often enough to justify the workflow.
 
 Run the checks separately:
 
