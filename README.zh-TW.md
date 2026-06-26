@@ -217,6 +217,21 @@ python -m sporepath --db real_memory.sqlite digest-queue `
 
 每個片段都會 checkpoint 成 `done`、`skipped` 或 `error`。中途停掉也沒關係，下次可以接著處理還沒完成的 backlog。
 
+如果想讓 worker 掛著，只在離峰時段處理 queue：
+
+```powershell
+python -m sporepath --db real_memory.sqlite queue-worker `
+  --off-peak 22:00-07:00 `
+  --batch-size 5 `
+  --interval-s 300 `
+  --extractor ollama `
+  --model qwen3.5:4b `
+  --ollama-timeout-s 180 `
+  --ollama-num-predict 320
+```
+
+要測試時可以加 `--once --run-now`，立刻跑一批就結束。
+
 ## 代謝後的筆記
 
 完整聊天紀錄太長，不適合回看。Thought atoms 很適合拿來計分和連線，但太碎，不適合直接閱讀。Digested notes 是中間層：

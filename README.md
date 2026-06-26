@@ -208,6 +208,21 @@ python -m sporepath --db real_memory.sqlite digest-queue `
 Each fragment is checkpointed as `done`, `skipped`, or `error`, so an interrupted
 run can continue later without reprocessing finished items.
 
+To leave a worker running and only process the queue during off-peak hours:
+
+```powershell
+python -m sporepath --db real_memory.sqlite queue-worker `
+  --off-peak 22:00-07:00 `
+  --batch-size 5 `
+  --interval-s 300 `
+  --extractor ollama `
+  --model qwen3.5:4b `
+  --ollama-timeout-s 180 `
+  --ollama-num-predict 320
+```
+
+Use `--once --run-now` to run one batch immediately for testing.
+
 ## ArcRift Companion Mode
 
 ArcRift already does a better job at capture, RAG, MCP, graph dashboard, and

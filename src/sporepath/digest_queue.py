@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 from dataclasses import dataclass, replace
+from datetime import time
 from pathlib import Path
 from typing import Iterable
 
@@ -22,6 +23,17 @@ class DigestQueueResult:
     atoms_created: int
     skipped: int
     errors: int
+
+
+def is_off_peak_window(current: time, window: str) -> bool:
+    start_text, end_text = _parse_window(window)
+    start = _parse_hhmm(start_text)
+    end = _parse_hhmm(end_text)
+    if start == end:
+        return True
+    if start < end:
+        return start <= current < end
+    return current >= start or current < end
 
 
 def collect_fragments_from_file(
@@ -132,3 +144,19 @@ def _atom_from_fragment(fragment: dict[str, object], *, extractor: Extractor | N
 
 class _SkipFragment(Exception):
     pass
+
+
+def _parse_window(window: str) -> tuple[str, str]:
+    parts = [part.strip() for part in window.split("-", 1)]
+    if len(parts) != 2 or not parts[0] or not parts[1]:
+        raise ValueError("off-peak window must look like HH:MM-HH:MM")
+    return parts[0], parts[1]
+
+
+def _parse_hhmm(value: str) -> time:
+    hour_text, minute_text = value.split(":", 1)
+    hour = int(hour_text)
+    minute = int(minute_text)
+    if not (0 <= hour <= 23 and 0 <= minute <= 59):
+        raise ValueError("off-peak time must use 00:00 through 23:59")
+    return time(hour, minute)

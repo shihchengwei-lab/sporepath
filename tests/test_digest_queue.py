@@ -1,14 +1,22 @@
 import json
 import tempfile
 import unittest
+from datetime import time
 from pathlib import Path
 
-from sporepath.digest_queue import collect_fragments_from_file, process_digest_queue
+from sporepath.digest_queue import collect_fragments_from_file, is_off_peak_window, process_digest_queue
 from sporepath.extractors import ExtractSignal
 from sporepath.store import MemoryStore
 
 
 class DigestQueueTests(unittest.TestCase):
+    def test_off_peak_window_handles_same_day_and_overnight_ranges(self):
+        self.assertTrue(is_off_peak_window(time(23, 0), "22:00-07:00"))
+        self.assertTrue(is_off_peak_window(time(6, 30), "22:00-07:00"))
+        self.assertFalse(is_off_peak_window(time(12, 0), "22:00-07:00"))
+        self.assertTrue(is_off_peak_window(time(12, 0), "09:00-17:00"))
+        self.assertFalse(is_off_peak_window(time(20, 0), "09:00-17:00"))
+
     def test_queue_processes_fragments_with_checkpoint(self):
         class FakeExtractor:
             def extract(self, text, role="unknown"):

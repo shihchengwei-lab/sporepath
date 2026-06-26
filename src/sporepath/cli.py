@@ -8,13 +8,14 @@ import sys
 import time
 import urllib.error
 import urllib.request
+from datetime import datetime
 from pathlib import Path
 
 from .arcrift_import import extract_atoms_from_arcrift_db
 from .app_config import default_app_config
 from .automation import sync_arcrift_memory
 from .codex_adapter import build_inspiration_prompt, codex_command, parse_inspiration_suggestions, run_codex_exec
-from .digest_queue import collect_fragments_from_files, process_digest_queue
+from .digest_queue import collect_fragments_from_files, is_off_peak_window, process_digest_queue
 from .evaluation import build_extraction_eval, score_eval_sheet
 from .extractors import OllamaExtractor
 from .graph_export import export_graph_html
@@ -145,6 +146,19 @@ def main(argv: list[str] | None = None) -> int:
     digest_queue.add_argument("--ollama-num-predict", type=int, default=220)
     digest_queue.add_argument("--min-confidence", type=float, default=0.55)
     digest_queue.add_argument("--skip-rebuild-edges", action="store_true")
+
+    queue_worker = sub.add_parser("queue-worker", help="Continuously process the digestion queue during an off-peak window.")
+    queue_worker.add_argument("--off-peak", default="22:00-07:00", help="Allowed processing window, e.g. 22:00-07:00.")
+    queue_worker.add_argument("--batch-size", type=int, default=5)
+    queue_worker.add_argument("--interval-s", type=float, default=300.0)
+    queue_worker.add_argument("--once", action="store_true", help="Run one scheduler tick and exit.")
+    queue_worker.add_argument("--run-now", action="store_true", help="Ignore --off-peak for this run.")
+    queue_worker.add_argument("--extractor", choices=["rules", "ollama"], default="rules")
+    queue_worker.add_argument("--model", default="qwen3:1.7b", help="Local Ollama model for --extractor ollama.")
+    queue_worker.add_argument("--ollama-host", default="http://127.0.0.1:11434")
+    queue_worker.add_argument("--ollama-timeout-s", type=int, default=60)
+    queue_worker.add_argument("--ollama-num-predict", type=int, default=220)
+    queue_worker.add_argument("--min-confidence", type=float, default=0.55)
 
     sub.add_parser("queue-stats", help="Show background digestion queue status counts.")
 
@@ -473,6 +487,40 @@ def main(argv: list[str] | None = None) -> int:
             f"pending={stats.get('pending', 0)}"
         )
         return 0
+
+    if args.command == "queue-worker":
+        extractor = None
+        if args.extractor == "ollama":
+            extractor = OllamaExtractor(
+                model=args.model,
+                host=args.ollama_host,
+                timeout_s=args.ollama_timeout_s,
+                num_predict=args.ollama_num_predict,
+                min_confidence=args.min_confidence,
+            )
+        while True:
+            now = datetime.now().time()
+            should_run = args.run_now or is_off_peak_window(now, args.off_peak)
+            if should_run:
+                result = process_digest_queue(store, extractor=extractor, limit=args.batch_size)
+                edges = store.rebuild_edges() if result.atoms_created else 0
+                stats = store.queue_stats()
+                print(
+                    "worker_tick=processed "
+                    f"processed={result.processed} atoms_created={result.atoms_created} "
+                    f"skipped={result.skipped} errors={result.errors} edges={edges} "
+                    f"pending={stats.get('pending', 0)}"
+                )
+            else:
+                stats = store.queue_stats()
+                print(
+                    "worker_tick=idle "
+                    f"off_peak={args.off_peak} pending={stats.get('pending', 0)}"
+                )
+            sys.stdout.flush()
+            if args.once:
+                return 0
+            time.sleep(max(1.0, args.interval_s))
 
     if args.command == "queue-stats":
         stats = store.queue_stats()

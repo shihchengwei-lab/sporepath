@@ -156,6 +156,45 @@ class CliTests(unittest.TestCase):
         self.assertEqual(stats["done"], 1)
         self.assertEqual(stats["pending"], 1)
 
+    def test_queue_worker_once_run_now_processes_one_batch(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            db = Path(tmp) / "memory.sqlite"
+            chat = Path(tmp) / "chat.jsonl"
+            chat.write_text(
+                "\n".join(
+                    [
+                        json.dumps({"role": "user", "content": "第一個 worker queue idea。"}, ensure_ascii=False),
+                        json.dumps({"role": "user", "content": "第二個 worker queue idea。"}, ensure_ascii=False),
+                    ]
+                ),
+                encoding="utf-8",
+            )
+
+            out = io.StringIO()
+            with redirect_stdout(out):
+                main(["--db", str(db), "queue-build", "--input", str(chat), "--min-chars", "5"])
+            with redirect_stdout(out):
+                code = main(
+                    [
+                        "--db",
+                        str(db),
+                        "queue-worker",
+                        "--once",
+                        "--run-now",
+                        "--extractor",
+                        "rules",
+                        "--batch-size",
+                        "1",
+                    ]
+                )
+            store = MemoryStore(db)
+            stats = store.queue_stats()
+
+        self.assertEqual(code, 0)
+        self.assertIn("worker_tick=processed", out.getvalue())
+        self.assertEqual(stats["done"], 1)
+        self.assertEqual(stats["pending"], 1)
+
     def test_inspire_feedback_command_strengthens_selected_atoms(self):
         with tempfile.TemporaryDirectory() as tmp:
             db = Path(tmp) / "memory.sqlite"
