@@ -115,6 +115,141 @@ class CliTests(unittest.TestCase):
         self.assertEqual(len(atoms), 1)
         self.assertIn("第一個", atoms[0].text)
 
+    def test_inspire_feedback_command_strengthens_selected_atoms(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            db = Path(tmp) / "memory.sqlite"
+            store = MemoryStore(db)
+            store.upsert_atoms(
+                [
+                    ThoughtAtom(
+                        id="a1",
+                        source="sample.jsonl:line[1]",
+                        role="user",
+                        text="小模型是 scout。",
+                        summary="小模型 scout",
+                        kind="idea",
+                        tags=["scout"],
+                        timestamp=None,
+                        importance=0.5,
+                        activation=0.2,
+                        metadata={},
+                    ),
+                    ThoughtAtom(
+                        id="a2",
+                        source="sample.jsonl:line[2]",
+                        role="user",
+                        text="神之一手來自遠處弱連結。",
+                        summary="遠處弱連結",
+                        kind="analogy",
+                        tags=["go"],
+                        timestamp=None,
+                        importance=0.5,
+                        activation=0.1,
+                        metadata={},
+                    ),
+                ]
+            )
+            run_id = store.record_inspire_run(
+                question="如何驗證 scout？",
+                focus_atom_ids=["a1"],
+                latent_atom_ids=["a2"],
+                output_text="用遠處弱連結做 eval。",
+            )
+
+            out = io.StringIO()
+            with redirect_stdout(out):
+                code = main(
+                    [
+                        "--db",
+                        str(db),
+                        "inspire-feedback",
+                        run_id,
+                        "--status",
+                        "applied",
+                        "--atoms",
+                        "a1",
+                        "a2",
+                    ]
+                )
+            refreshed = MemoryStore(db)
+            edges = refreshed.list_edges()
+
+        self.assertEqual(code, 0)
+        self.assertIn("bridges_strengthened=1", out.getvalue())
+        self.assertEqual(edges[0].relation, "inspire_feedback")
+
+    def test_inspire_feedback_command_accepts_suggestion_id(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            db = Path(tmp) / "memory.sqlite"
+            store = MemoryStore(db)
+            store.upsert_atoms(
+                [
+                    ThoughtAtom(
+                        id="a1",
+                        source="sample.jsonl:line[1]",
+                        role="user",
+                        text="Small model is only the scout.",
+                        summary="Small model scout",
+                        kind="idea",
+                        tags=["scout"],
+                        timestamp=None,
+                        importance=0.5,
+                        activation=0.2,
+                        metadata={},
+                    ),
+                    ThoughtAtom(
+                        id="a2",
+                        source="sample.jsonl:line[2]",
+                        role="user",
+                        text="Cloud model decides whether the bridge sparks.",
+                        summary="Cloud model bridge spark",
+                        kind="idea",
+                        tags=["spark"],
+                        timestamp=None,
+                        importance=0.5,
+                        activation=0.1,
+                        metadata={},
+                    ),
+                ]
+            )
+            run_id = store.record_inspire_run(
+                question="How do I validate the split?",
+                focus_atom_ids=["a1"],
+                latent_atom_ids=["a2"],
+                output_text="suggestion_id: 1\ncited_atom_ids: [a1, a2]",
+            )
+            store.record_inspire_suggestions(
+                run_id,
+                [
+                    {
+                        "suggestion_id": "1",
+                        "cited_atom_ids": ["a1", "a2"],
+                        "text": "Use this split as the eval.",
+                    }
+                ],
+            )
+
+            out = io.StringIO()
+            with redirect_stdout(out):
+                code = main(
+                    [
+                        "--db",
+                        str(db),
+                        "inspire-feedback",
+                        run_id,
+                        "--status",
+                        "selected",
+                        "--suggestion",
+                        "1",
+                    ]
+                )
+            refreshed = MemoryStore(db)
+            edges = refreshed.list_edges()
+
+        self.assertEqual(code, 0)
+        self.assertIn("suggestion=1", out.getvalue())
+        self.assertEqual(edges[0].relation, "inspire_feedback")
+
 
 if __name__ == "__main__":
     unittest.main()

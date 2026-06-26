@@ -5,6 +5,10 @@
 ![A small Sporepath scout organizes AI chat fragments into focus paths and latent idea spores](assets/hero-mascot.png)
 
 Local-first experiment for turning AI chat history into a living memory graph.
+After testing the idea against ArcRift, Sporepath is intentionally shifting
+toward a companion role: let ArcRift handle capture, RAG, MCP, and context
+injection; let Sporepath digest those memories into notes, metabolic focus
+paths, and weird-but-bridged inspiration prompts.
 
 Sporepath grows the paths you use, and keeps forgotten thoughts ready to wake.
 The goal is not another note archive. The experiment is whether old chat
@@ -21,7 +25,9 @@ thicken, fade, or sink into archive.
 
 ## What It Does
 
-- Imports ChatGPT-style `conversations.json` and generic JSONL chat logs.
+- Imports ChatGPT-style `conversations.json`, generic JSONL chat logs,
+  allowlisted local Codex/Claude conversation stores, and ArcRift SQLite
+  `full_chats`.
 - Extracts `thought atoms` with either:
   - a deterministic rules baseline, or
   - a local Ollama model such as `qwen3:1.7b`.
@@ -57,19 +63,64 @@ On Windows, double-click:
 Sporepath.bat
 ```
 
-This opens a small local window with three everyday actions:
+This starts the ArcRift backend if needed, starts minimized Sporepath watchers,
+and opens the small local Sporepath window.
+
+- Local Codex/Claude/jsonl sources are watched directly. When those files
+  change, Sporepath refreshes the SQLite memory, digested notes, Obsidian vault,
+  and graph.
+- Web chats are intentionally not scraped in the background. After a ChatGPT or
+  Claude web conversation, press ArcRift's popup **Save Chat** button. Once
+  ArcRift writes the chat into `ArcRift.db`, Sporepath imports it through the
+  same refresh pipeline.
+
+The window still exposes the everyday actions:
 
 - **Refresh Now**: rebuild notes, export the Obsidian vault, and refresh the graph.
+- **Import ArcRift**: import ArcRift `full_chats` from a selected SQLite DB, then rebuild notes, vault, and graph.
 - **Sync Vault**: treat edited Obsidian notes as usage feedback and thicken their source atoms.
 - **Open Vault**: open the Markdown vault folder for Obsidian.
 - **Inspire**: enter a stuck question and ask Codex for weird-but-bridged next moves.
+- **Mark Useful**: enter a returned suggestion id and thicken the bridge that actually helped.
 
 The batch launcher uses `real_memory.sqlite` in this checkout by default. The
 window still lets you edit the DB, chat export, vault, and graph paths before
 running anything.
 
-Use **Auto-detect Sources** to find local Codex and Claude conversation stores.
-Sporepath only uses an allowlist of likely conversation sources:
+If you only want the backend without opening Sporepath:
+
+```text
+Start-ArcRift.bat
+```
+
+If Chrome's extension manager is inconvenient, there are best-effort launchers:
+
+```text
+Launch-ArcRift-Chrome.bat
+```
+
+It tries to open a separate Chrome profile at
+`%LOCALAPPDATA%\Sporepath\ArcRift Chrome Profile` with the local ArcRift
+extension loaded from `..\ArcRift\extension\dist\chrome`. Google Chrome can
+ignore `--load-extension` in some installs, so the reliable setup is still to
+load the unpacked ArcRift extension manually once from `chrome://extensions`.
+You may need to sign in to ChatGPT/Claude once in that dedicated profile.
+
+If you want to reuse your existing logged-in Chrome profile instead, use:
+
+```text
+Launch-ArcRift-Logged-In-Chrome.bat
+```
+
+This closes Chrome, then tries to reopen the `Default` profile with the ArcRift
+extension loaded. It is useful when ChatGPT/Claude are already signed in in your
+normal browser, but it will close any current Chrome windows first. If Chrome
+ignores the extension flag, manually install the unpacked ArcRift extension once
+and keep using your normal browser.
+
+Use **Auto-detect Sources** to find local Codex and Claude conversation stores,
+or let the source watcher do it automatically. Sporepath only uses an allowlist
+of likely conversation sources:
 
 ```text
 {home}/.codex/history.jsonl
@@ -125,6 +176,58 @@ why it kept an atom:
 
 ```powershell
 python -m sporepath --db qwen_trial.sqlite show <atom-id>
+```
+
+## ArcRift Companion Mode
+
+ArcRift already does a better job at capture, RAG, MCP, graph dashboard, and
+context injection than this small repo should try to reimplement. Sporepath can
+use ArcRift as the memory source and stay focused on the layer ArcRift does not
+center: readable digestion, path metabolism, and `inspire`.
+
+Point Sporepath at an ArcRift SQLite database:
+
+```powershell
+$arc = Read-Host "Paste the full path to ArcRift.db"
+python -m sporepath --db my_memory.sqlite import-arcrift $arc
+python -m sporepath --db my_memory.sqlite digest
+python -m sporepath --db my_memory.sqlite export-vault "$env:USERPROFILE\Documents\Sporepath Vault"
+python -m sporepath --db my_memory.sqlite inspire "I am stuck on what to do next"
+```
+
+If you run ArcRift from its repo, the default SQLite file is usually
+`ArcRift.db` in the backend working directory unless `SQLITE_DB_PATH` is set.
+Sporepath opens the ArcRift DB in read-only mode and imports from
+`full_chats.rawText`; it does not modify ArcRift's database.
+
+Filter to one ArcRift project or session id:
+
+```powershell
+python -m sporepath --db my_memory.sqlite import-arcrift $arc --project "My Project"
+```
+
+To keep Sporepath updated automatically after ArcRift saves chats:
+
+```powershell
+python -m sporepath --db real_memory.sqlite watch-arcrift `
+  --arcrift-db "$env:USERPROFILE\Desktop\GH_repos\ArcRift\backend\ArcRift.db" `
+  --vault "$env:USERPROFILE\Documents\Sporepath Vault" `
+  --graph real_graph.html
+```
+
+On this machine, `Sporepath.bat` starts that watcher for you.
+
+To open a Chrome profile with the ArcRift extension already loaded:
+
+```text
+Launch-ArcRift-Chrome.bat
+```
+
+To reuse the already signed-in Chrome `Default` profile, close/reopen Chrome and
+load the extension in one step:
+
+```text
+Launch-ArcRift-Logged-In-Chrome.bat
 ```
 
 ## Digested Notes
@@ -183,6 +286,17 @@ python -m sporepath --db my_memory.sqlite refresh --source codex --source claude
 
 `--source` is explicit on purpose. A plain `refresh` does not scan your
 home directory unless you ask for sources.
+
+To keep local Codex/Claude/jsonl sources synced without pressing Refresh Now:
+
+```powershell
+python -m sporepath --db real_memory.sqlite watch-sources --source all `
+  --vault "$env:USERPROFILE\Documents\Sporepath Vault" `
+  --graph real_graph.html
+```
+
+On Windows, `Run-Sporepath-Sources-Watcher.bat` runs that command, and
+`Sporepath.bat` starts it for you.
 
 ## Obsidian Vault Export
 
@@ -245,6 +359,30 @@ Real run:
 python -m sporepath --db my_memory.sqlite inspire "I am stuck on how to validate this project" --focus-limit 5 --latent-limit 10
 ```
 
+Successful runs print an `inspire_run=<id>` line. When the generated text
+includes `suggestion_id` and `cited_atom_ids`, Sporepath stores that mapping so
+you can mark a useful idea without retyping atom ids:
+
+```powershell
+python -m sporepath --db my_memory.sqlite inspire-feedback <run-id> `
+  --status useful `
+  --suggestion 1 `
+  --note "This bridge changed the next step"
+```
+
+You can still mark a bridge manually by passing the cited atoms:
+
+```powershell
+python -m sporepath --db my_memory.sqlite inspire-feedback <run-id> `
+  --status useful `
+  --atoms <atom-id-1> <atom-id-2> `
+  --note "This bridge changed the next step"
+```
+
+Positive feedback statuses are `selected`, `useful`, and `applied`. They thicken
+the selected atoms and add or strengthen an `inspire_feedback` bridge between
+them. `boring`, `wrong`, and `ignored` are recorded but do not thicken the path.
+
 ## Graph
 
 ```powershell
@@ -277,19 +415,66 @@ Do not commit:
 The `.gitignore` is set up to ignore the common generated files, but review
 `git status` before publishing.
 
+## Extraction Eval
+
+Use this before trusting a small local model as a scout. It builds a review
+sheet from real chat fragments, runs the rules baseline or Ollama extractor,
+and leaves blank human fields for scoring.
+
+```powershell
+$env:PYTHONPATH = "src"
+python -m sporepath eval-extract --source codex --limit 20 `
+  --contains debug --contains bug --contains error `
+  --max-chars 1200 `
+  --out eval\codex_eval.jsonl `
+  --report eval\codex_eval.md
+```
+
+To test a local model:
+
+```powershell
+python -m sporepath eval-extract --source codex --limit 20 `
+  --contains debug --contains bug --contains error `
+  --extractor ollama --model qwen3:1.7b `
+  --max-chars 1200 `
+  --out eval\qwen_eval.jsonl `
+  --report eval\qwen_eval.md
+```
+
+After reviewing the Markdown, fill the `human` fields in the JSONL file, then
+summarize:
+
+```powershell
+python -m sporepath eval-score eval\qwen_eval.jsonl
+```
+
+The human part should stay narrow. Do not judge whether the model wrote a good
+note. Judge whether it behaved like a useful scout:
+
+- `keep`: should this fragment be kept?
+- `route`: debug, product, preference, idea, decision, research, writing, ops, or other.
+- `signal_found`: did it catch the reusable signal?
+- `noise_marked`: did it mark obvious disposable noise?
+- `handoff_sufficient`: is the handoff enough for a cloud model to think with later?
+
+The command reports pass rate, keep agreement, route agreement, signal-found
+rate, noise-marked rate, and handoff-sufficient rate.
+
 ## Current Limits
 
 - Edges currently include shared-tag evidence and confidence metadata, but they
   are still not true semantic embeddings.
 - `qwen3:1.7b` can extract useful candidates, but it also creates noise.
+- ArcRift import currently reads `full_chats.rawText` only; it does not import
+  ArcRift facts, vector chunks, or retrieval scores yet.
 - `digest` is currently rules-based grouping, not high-quality editorial
   summarization.
 - `sync-vault` only uses generated-note file edits as feedback; this is not a
   full Obsidian plugin or bidirectional sync engine.
 - The desktop window is a local tkinter launcher, not a packaged Windows
   installer yet.
-- There is no eval UI yet; manual inspection with `focus` and `show` is still
-  required.
+- Extraction eval exists as CLI-generated JSONL/Markdown sheets, but there is
+  no graphical eval UI yet.
 - Archive/deep-archive budgets are design goals, not complete product features.
 - The graph is a static HTML export, not a full app.
 

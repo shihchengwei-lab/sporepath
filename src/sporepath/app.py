@@ -6,7 +6,8 @@ from pathlib import Path
 from tkinter import BOTH, END, LEFT, RIGHT, Button, Entry, Frame, Label, StringVar, Text, Tk, filedialog
 
 from .app_config import AppConfig
-from .codex_adapter import build_inspiration_prompt, run_codex_exec
+from .automation import sync_arcrift_memory
+from .codex_adapter import build_inspiration_prompt, parse_inspiration_suggestions, run_codex_exec
 from .refresh import refresh_memory
 from .source_discovery import discover_sources
 from .store import MemoryStore
@@ -27,9 +28,12 @@ class SporepathApp(Frame):
         super().__init__(master, padx=12, pady=12)
         self.db_var = StringVar(value=str(config.db_path))
         self.input_var = StringVar(value=str(config.input_path or ""))
+        self.arcrift_var = StringVar(value=str(config.arcrift_path or ""))
         self.vault_var = StringVar(value=str(config.vault_path))
         self.graph_var = StringVar(value=str(config.graph_path))
+        self.suggestion_var = StringVar(value="1")
         self.detected_source_paths: list[Path] = []
+        self.last_inspire_run_id: str | None = None
         self.question: Text
         self.output: Text
         self._build()
@@ -37,12 +41,14 @@ class SporepathApp(Frame):
     def _build(self) -> None:
         self._path_row("Memory DB", self.db_var, browse_file=True)
         self._path_row("Chat Export", self.input_var, browse_file=True)
+        self._path_row("ArcRift DB", self.arcrift_var, browse_file=True)
         self._path_row("Obsidian Vault", self.vault_var, browse_dir=True)
         self._path_row("Graph HTML", self.graph_var, browse_file=True)
 
         button_row = Frame(self)
         button_row.pack(fill="x", pady=(8, 12))
         Button(button_row, text="Auto-detect Sources", command=self.detect_sources).pack(side=LEFT, padx=(0, 8))
+        Button(button_row, text="Import ArcRift", command=self.import_arcrift).pack(side=LEFT, padx=(0, 8))
         Button(button_row, text="Refresh Now", command=self.refresh_now).pack(side=LEFT, padx=(0, 8))
         Button(button_row, text="Sync Vault", command=self.sync_vault).pack(side=LEFT, padx=(0, 8))
         Button(button_row, text="Open Vault", command=self.open_vault).pack(side=LEFT, padx=(0, 8))
@@ -50,7 +56,12 @@ class SporepathApp(Frame):
         Label(self, text="Question for Inspire").pack(anchor="w")
         self.question = Text(self, height=5, wrap="word")
         self.question.pack(fill="x", pady=(4, 8))
-        Button(self, text="Inspire", command=self.inspire).pack(anchor="w", pady=(0, 12))
+        inspire_row = Frame(self)
+        inspire_row.pack(fill="x", pady=(0, 12))
+        Button(inspire_row, text="Inspire", command=self.inspire).pack(side=LEFT, padx=(0, 8))
+        Label(inspire_row, text="Suggestion id").pack(side=LEFT, padx=(0, 4))
+        Entry(inspire_row, textvariable=self.suggestion_var, width=8).pack(side=LEFT, padx=(0, 8))
+        Button(inspire_row, text="Mark Useful", command=self.mark_inspire_useful).pack(side=LEFT)
 
         Label(self, text="Output").pack(anchor="w")
         self.output = Text(self, height=20, wrap="word")
@@ -87,6 +98,9 @@ class SporepathApp(Frame):
     def refresh_now(self) -> None:
         self._run_background(self._refresh_worker)
 
+    def import_arcrift(self) -> None:
+        self._run_background(self._arcrift_worker)
+
     def detect_sources(self) -> None:
         sources = discover_sources()
         self.detected_source_paths = [source.path for source in sources]
@@ -108,6 +122,11 @@ class SporepathApp(Frame):
 
     def inspire(self) -> None:
         self._run_background(self._inspire_worker)
+
+    def mark_inspire_useful(self) -> None:
+        run_id = self.last_inspire_run_id
+        suggestion_id = self.suggestion_var.get().strip()
+        self._run_background(lambda: self._feedback_worker(run_id, suggestion_id))
 
     def _refresh_worker(self) -> str:
         input_text = self.input_var.get().strip()
@@ -133,13 +152,32 @@ class SporepathApp(Frame):
             f"modified_notes={result.notes_touched} touched_atoms={result.atoms_touched}\n"
         )
 
+    def _arcrift_worker(self) -> str:
+        arcrift_path = self.arcrift_var.get().strip()
+        if not arcrift_path:
+            return "Choose an ArcRift DB first.\n"
+        result = sync_arcrift_memory(
+            db_path=self.db_var.get(),
+            arcrift_db_path=arcrift_path,
+            vault_path=self.vault_var.get(),
+            graph_path=self.graph_var.get(),
+        )
+        return (
+            "ArcRift import complete.\n"
+            f"atoms_imported={result.atoms_imported} atoms={result.atoms_after} "
+            f"edges={result.edges_rebuilt} notes={result.notes_built} "
+            f"vault_notes={result.vault_notes_exported}\n"
+            f"graph={result.graph_path.resolve() if result.graph_path else '(not written)'}\n"
+        )
+
     def _inspire_worker(self) -> str:
         question = self.question.get("1.0", END).strip()
         if not question:
             return "Type a question first.\n"
         store = MemoryStore(self.db_var.get())
         focus_atoms = store.focus_atoms(limit=6)
-        latent_atoms = store.latent_candidates(question, limit=12)
+        focus_atom_ids = [atom.id for atom in focus_atoms]
+        latent_atoms = store.latent_candidates(question, limit=12, focus_atom_ids=focus_atom_ids)
         if not focus_atoms and not latent_atoms:
             return "Memory database is empty. Refresh or ingest chats first.\n"
         prompt = build_inspiration_prompt(
@@ -149,10 +187,45 @@ class SporepathApp(Frame):
         )
         result = run_codex_exec(prompt, cwd=str(Path.cwd()), timeout_s=300)
         if result.returncode == 0:
+            latent_atom_ids = [atom.id for atom in latent_atoms]
+            run_id = store.record_inspire_run(
+                question=question,
+                focus_atom_ids=focus_atom_ids,
+                latent_atom_ids=latent_atom_ids,
+                output_text=result.stdout,
+            )
+            suggestions = parse_inspiration_suggestions(
+                result.stdout,
+                known_atom_ids=set(focus_atom_ids + latent_atom_ids),
+            )
+            suggestion_count = store.record_inspire_suggestions(run_id, suggestions)
             store.touch_atoms([atom.id for atom in focus_atoms + latent_atoms[:3]], amount=0.08)
+            self.last_inspire_run_id = run_id
+            suggestion_ids = ",".join(str(suggestion["suggestion_id"]) for suggestion in suggestions)
+            suffix = f" suggestions={suggestion_ids}" if suggestion_count else ""
+            result_text = f"{result.stdout}\n\ninspire_run={run_id}{suffix}\n"
+        else:
+            result_text = result.stdout
         if result.stderr.strip():
-            return result.stdout + "\n" + result.stderr
-        return result.stdout
+            return result_text + "\n" + result.stderr
+        return result_text
+
+    def _feedback_worker(self, run_id: str | None, suggestion_id: str) -> str:
+        if not run_id:
+            return "Run Inspire first, then mark a suggestion useful.\n"
+        if not suggestion_id:
+            return "Type the suggestion id to mark.\n"
+        result = MemoryStore(self.db_var.get()).apply_inspire_feedback(
+            run_id,
+            suggestion_id=suggestion_id,
+            status="useful",
+        )
+        return (
+            "Inspire feedback recorded.\n"
+            f"run={run_id} suggestion={suggestion_id} "
+            f"atoms_touched={result['atoms_touched']} "
+            f"bridges_strengthened={result['bridges_strengthened']}\n"
+        )
 
     def _run_background(self, func) -> None:
         def runner() -> None:

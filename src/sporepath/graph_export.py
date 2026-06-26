@@ -27,7 +27,11 @@ def graph_payload(store: MemoryStore, *, limit: int = 160) -> dict:
                 "from": edge.from_id,
                 "to": edge.to_id,
                 "relation": edge.relation,
+                "type": _edge_type(edge.relation),
                 "weight": edge.weight,
+                "confidence": edge.confidence,
+                "status": edge.evidence.get("status", ""),
+                "evidence": edge.evidence,
             }
             for edge in edges
         ],
@@ -73,6 +77,7 @@ def render_graph_html(payload: dict, *, title: str) -> str:
   --question: #f5c2e7;
   --analogy: #f9e2af;
   --note: #cdd6f4;
+  --bridge: #f59e0b;
 }}
 * {{ box-sizing: border-box; }}
 body {{
@@ -195,6 +200,12 @@ aside {{
   border-radius: 50%;
   flex: 0 0 auto;
 }}
+.line-swatch {{
+  width: 24px;
+  height: 3px;
+  border-radius: 999px;
+  flex: 0 0 auto;
+}}
 .details {{
   border-top: 1px solid var(--line);
   padding-top: 16px;
@@ -262,10 +273,11 @@ aside {{
       <div class="legend-row"><span class="swatch" style="background: var(--focus)"></span>Focus nodes: high activation</div>
       <div class="legend-row"><span class="swatch" style="background: var(--latent)"></span>Latent nodes: low activation</div>
       <div class="legend-row"><span class="swatch" style="background: var(--line)"></span>Line thickness: relation weight</div>
+      <div class="legend-row"><span class="line-swatch" style="background: var(--bridge)"></span>Inspire bridge: selected useful path</div>
     </section>
     <section class="details" id="details">
       <h2>Select a node</h2>
-      <div class="meta">Click any circle to inspect the original thought atom.</div>
+      <div class="meta">Click a circle to inspect an atom, or click an orange line to inspect an inspire bridge.</div>
     </section>
   </aside>
 </div>
@@ -280,6 +292,7 @@ const details = document.getElementById("details");
 const state = {{
   mode: "all",
   selected: null,
+  selectedEdge: null,
   dragging: null,
   pointer: {{ x: 0, y: 0 }},
 }};
@@ -386,13 +399,20 @@ function draw() {{
   runLayout();
   for (const edge of edges) {{
     const visible = visibleNode(edge.fromNode) && visibleNode(edge.toNode);
-    ctx.globalAlpha = visible ? 0.34 : 0.05;
-    ctx.strokeStyle = "#76838c";
-    ctx.lineWidth = 0.6 + edge.weight * 4;
+    const inspire = edge.type === "inspire_feedback";
+    ctx.globalAlpha = visible ? (inspire ? 0.78 : 0.34) : 0.05;
+    ctx.strokeStyle = inspire ? "#f59e0b" : "#76838c";
+    ctx.lineWidth = inspire ? 1.4 + edge.weight * 7 : 0.6 + edge.weight * 4;
+    if (inspire) ctx.setLineDash([8, 5]);
+    if (state.selectedEdge && state.selectedEdge === edge) {{
+      ctx.globalAlpha = 1;
+      ctx.lineWidth += 2;
+    }}
     ctx.beginPath();
     ctx.moveTo(edge.fromNode.x, edge.fromNode.y);
     ctx.lineTo(edge.toNode.x, edge.toNode.y);
     ctx.stroke();
+    ctx.setLineDash([]);
   }}
   for (const node of nodes) {{
     const radius = nodeRadius(node);
@@ -430,9 +450,43 @@ function pickNode(x, y) {{
   return null;
 }}
 
+function pickEdge(x, y) {{
+  let best = null;
+  let bestDistance = 12;
+  for (const edge of edges) {{
+    if (!visibleNode(edge.fromNode) || !visibleNode(edge.toNode)) continue;
+    const distance = distanceToSegment(
+      x,
+      y,
+      edge.fromNode.x,
+      edge.fromNode.y,
+      edge.toNode.x,
+      edge.toNode.y
+    );
+    const threshold = edge.type === "inspire_feedback" ? 14 : 8;
+    if (distance <= threshold && distance < bestDistance) {{
+      best = edge;
+      bestDistance = distance;
+    }}
+  }}
+  return best;
+}}
+
+function distanceToSegment(px, py, ax, ay, bx, by) {{
+  const dx = bx - ax;
+  const dy = by - ay;
+  const lengthSq = dx * dx + dy * dy;
+  if (lengthSq === 0) return Math.hypot(px - ax, py - ay);
+  const t = Math.max(0, Math.min(1, ((px - ax) * dx + (py - ay) * dy) / lengthSq));
+  const x = ax + t * dx;
+  const y = ay + t * dy;
+  return Math.hypot(px - x, py - y);
+}}
+
 function showDetails(node) {{
   if (!node) return;
   state.selected = node;
+  state.selectedEdge = null;
   details.innerHTML = `
     <h2>${{escapeHtml(node.summary)}}</h2>
     <div class="meta">
@@ -445,6 +499,28 @@ function showDetails(node) {{
     </div>
     <div class="summary">${{escapeHtml(node.summary)}}</div>
     <div class="text">${{escapeHtml(node.text)}}</div>
+  `;
+}}
+
+function showEdgeDetails(edge) {{
+  if (!edge) return;
+  state.selected = null;
+  state.selectedEdge = edge;
+  const evidence = edge.evidence || {{}};
+  const status = edge.status || evidence.status || "";
+  const note = evidence.note || "";
+  details.innerHTML = `
+    <h2>${{edge.type === "inspire_feedback" ? "Inspire bridge" : "Edge"}}</h2>
+    <div class="meta">
+      from: ${{escapeHtml(edge.from)}}<br>
+      to: ${{escapeHtml(edge.to)}}<br>
+      relation: ${{escapeHtml(edge.relation)}}<br>
+      status: ${{escapeHtml(status || "(none)")}}<br>
+      weight: ${{edge.weight.toFixed(2)}} / confidence: ${{Number(edge.confidence || 0).toFixed(2)}}<br>
+      run: ${{escapeHtml(evidence.run_id || "(none)")}}
+    </div>
+    <div class="summary">${{escapeHtml(note || "This bridge was strengthened by inspire feedback.")}}</div>
+    <div class="text">${{escapeHtml(JSON.stringify(evidence, null, 2))}}</div>
   `;
 }}
 
@@ -462,8 +538,14 @@ canvas.addEventListener("pointerdown", event => {{
   if (node) {{
     state.dragging = node;
     state.selected = node;
+    state.selectedEdge = null;
     showDetails(node);
     canvas.setPointerCapture(event.pointerId);
+    return;
+  }}
+  const edge = pickEdge(event.clientX - rect.left, event.clientY - rect.top);
+  if (edge) {{
+    showEdgeDetails(edge);
   }}
 }});
 canvas.addEventListener("pointermove", event => {{
@@ -521,3 +603,11 @@ def _node_payload(atom: ThoughtAtom) -> dict:
         "activation": atom.activation,
         "state": state,
     }
+
+
+def _edge_type(relation: str) -> str:
+    if relation == "inspire_feedback":
+        return "inspire_feedback"
+    if relation.startswith("shared_tags:"):
+        return "shared_tags"
+    return "other"

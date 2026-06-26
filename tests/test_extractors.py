@@ -34,7 +34,11 @@ class ExtractorTests(unittest.TestCase):
                 {
                     "keep": True,
                     "kind": "taste",
+                    "route": "preference",
                     "summary": "文案不要太文言",
+                    "signals": ["玩家語氣", "不要太文言"],
+                    "noise": ["抱怨語氣"],
+                    "handoff": "玩家-facing 文案要白話，不要文言腔。",
                     "tags": ["writing", "player-facing"],
                     "confidence": 0.91,
                     "reason": "這是可重用偏好",
@@ -47,7 +51,37 @@ class ExtractorTests(unittest.TestCase):
 
         self.assertEqual(signal.kind, "taste")
         self.assertEqual(signal.summary, "文案不要太文言")
+        self.assertEqual(signal.route, "preference")
+        self.assertIn("玩家語氣", signal.signals)
+        self.assertIn("抱怨語氣", signal.noise)
+        self.assertEqual(signal.handoff, "玩家-facing 文案要白話，不要文言腔。")
         self.assertIn("player-facing", signal.tags)
+
+    def test_parse_signal_json_accepts_scout_fields(self):
+        raw = json.dumps(
+            {
+                "keep": True,
+                "route": "debug",
+                "kind": "bug_memory",
+                "summary": "restore 狀態沒有同步",
+                "signals": ["restore flow", "ownership state"],
+                "noise": ["我快瘋了"],
+                "handoff": "購買 restore 後要檢查本地 ownership 狀態是否回寫。",
+                "tags": ["purchase", "state-sync"],
+                "confidence": 0.86,
+                "reason": "可重複踩到的 debug 記憶",
+            },
+            ensure_ascii=False,
+        )
+
+        signal = parse_signal_json(raw)
+
+        self.assertTrue(signal.keep)
+        self.assertEqual(signal.route, "debug")
+        self.assertEqual(signal.kind, "bug_memory")
+        self.assertEqual(signal.signals, ["restore flow", "ownership state"])
+        self.assertEqual(signal.noise, ["我快瘋了"])
+        self.assertEqual(signal.handoff, "購買 restore 後要檢查本地 ownership 狀態是否回寫。")
 
     def test_ingest_can_use_custom_extractor(self):
         class FakeExtractor:
@@ -59,6 +93,10 @@ class ExtractorTests(unittest.TestCase):
                     tags=["mvp", "slime-mold"],
                     confidence=0.88,
                     reason="可重用架構判斷",
+                    route="decision",
+                    signals=["使用訊號", "剪枝"],
+                    noise=["口語填充"],
+                    handoff="用使用訊號決定哪些路徑加粗或沉入封存。",
                 )
 
         with tempfile.TemporaryDirectory() as tmp:
@@ -79,9 +117,13 @@ class ExtractorTests(unittest.TestCase):
 
         self.assertEqual(len(atoms), 1)
         self.assertEqual(atoms[0].kind, "framework")
-        self.assertEqual(atoms[0].summary, "用使用訊號剪枝")
+        self.assertEqual(atoms[0].summary, "用使用訊號決定哪些路徑加粗或沉入封存。")
         self.assertIn("slime-mold", atoms[0].tags)
         self.assertEqual(atoms[0].metadata["extractor_confidence"], 0.88)
+        self.assertEqual(atoms[0].metadata["extractor_route"], "decision")
+        self.assertEqual(atoms[0].metadata["extractor_signals"], ["使用訊號", "剪枝"])
+        self.assertEqual(atoms[0].metadata["extractor_noise"], ["口語填充"])
+        self.assertEqual(atoms[0].metadata["extractor_handoff"], "用使用訊號決定哪些路徑加粗或沉入封存。")
 
 
 if __name__ == "__main__":

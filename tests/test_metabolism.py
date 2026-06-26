@@ -166,6 +166,199 @@ class MetabolismTests(unittest.TestCase):
         self.assertGreater(edges[0].confidence, 0)
         self.assertIn("shared", edges[0].evidence["shared_tags"])
 
+    def test_inspire_feedback_strengthens_atoms_and_bridge(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            store = MemoryStore(Path(tmp) / "memory.sqlite")
+            store.upsert_atoms(
+                [
+                    ThoughtAtom(
+                        id="focus",
+                        source="chat.jsonl:line[1]",
+                        role="user",
+                        text="正在做小模型 scout eval。",
+                        summary="小模型 scout eval",
+                        kind="idea",
+                        tags=["eval"],
+                        timestamp=None,
+                        importance=0.5,
+                        activation=0.2,
+                        metadata={},
+                    ),
+                    ThoughtAtom(
+                        id="latent",
+                        source="chat.jsonl:line[2]",
+                        role="user",
+                        text="圍棋神之一手是遠處弱連結。",
+                        summary="遠處弱連結",
+                        kind="analogy",
+                        tags=["go"],
+                        timestamp=None,
+                        importance=0.4,
+                        activation=0.1,
+                        metadata={},
+                    ),
+                ]
+            )
+            run_id = store.record_inspire_run(
+                question="怎麼驗證 scout 有價值？",
+                focus_atom_ids=["focus"],
+                latent_atom_ids=["latent"],
+                output_text="用圍棋殘局測試 scout handoff。",
+            )
+
+            result = store.apply_inspire_feedback(
+                run_id,
+                atom_ids=["focus", "latent"],
+                status="useful",
+                note="這條橋有用",
+                amount=0.2,
+            )
+            focus = store.get_atom("focus")
+            latent = store.get_atom("latent")
+            edges = store.list_edges()
+
+            self.assertEqual(result["atoms_touched"], 2)
+            self.assertEqual(result["bridges_strengthened"], 1)
+            self.assertGreater(focus.activation, 0.2)
+            self.assertGreater(latent.activation, 0.1)
+            self.assertEqual(edges[0].relation, "inspire_feedback")
+            self.assertEqual(edges[0].evidence["status"], "useful")
+            self.assertEqual(edges[0].evidence["run_id"], run_id)
+
+            store.rebuild_edges()
+            relations = [edge.relation for edge in store.list_edges()]
+
+        self.assertIn("inspire_feedback", relations)
+
+    def test_inspire_feedback_can_use_stored_suggestion(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            store = MemoryStore(Path(tmp) / "memory.sqlite")
+            store.upsert_atoms(
+                [
+                    ThoughtAtom(
+                        id="focus",
+                        source="chat.jsonl:line[1]",
+                        role="user",
+                        text="Small model scout writes the first atom.",
+                        summary="Small model scout atom",
+                        kind="idea",
+                        tags=["scout"],
+                        timestamp=None,
+                        importance=0.5,
+                        activation=0.2,
+                        metadata={},
+                    ),
+                    ThoughtAtom(
+                        id="latent",
+                        source="chat.jsonl:line[2]",
+                        role="user",
+                        text="A weak bridge can become useful later.",
+                        summary="Weak bridge later becomes useful",
+                        kind="analogy",
+                        tags=["bridge"],
+                        timestamp=None,
+                        importance=0.4,
+                        activation=0.1,
+                        metadata={},
+                    ),
+                ]
+            )
+            run_id = store.record_inspire_run(
+                question="How do I validate sparks?",
+                focus_atom_ids=["focus"],
+                latent_atom_ids=["latent"],
+                output_text="suggestion_id: 1\ncited_atom_ids: [focus, latent]",
+            )
+            store.record_inspire_suggestions(
+                run_id,
+                [
+                    {
+                        "suggestion_id": "1",
+                        "cited_atom_ids": ["focus", "latent"],
+                        "text": "Use the weak bridge as the eval case.",
+                    }
+                ],
+            )
+
+            result = store.apply_inspire_feedback(
+                run_id,
+                suggestion_id="1",
+                status="selected",
+            )
+            edges = store.list_edges()
+
+        self.assertEqual(result["atoms_touched"], 2)
+        self.assertEqual(result["bridges_strengthened"], 1)
+        self.assertEqual(edges[0].evidence["suggestion_id"], "1")
+
+    def test_latent_candidates_prefer_feedback_bridge_from_focus(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            store = MemoryStore(Path(tmp) / "memory.sqlite")
+            store.upsert_atoms(
+                [
+                    ThoughtAtom(
+                        id="focus",
+                        source="chat.jsonl:line[1]",
+                        role="user",
+                        text="I am focused on validating scout quality.",
+                        summary="Validate scout quality",
+                        kind="idea",
+                        tags=["scout"],
+                        timestamp=None,
+                        importance=0.5,
+                        activation=0.9,
+                        metadata={},
+                    ),
+                    ThoughtAtom(
+                        id="bridged",
+                        source="chat.jsonl:line[2]",
+                        role="user",
+                        text="A ritual metaphor helped test the product story.",
+                        summary="Ritual metaphor for product story",
+                        kind="analogy",
+                        tags=["ritual"],
+                        timestamp=None,
+                        importance=0.2,
+                        activation=0.1,
+                        metadata={},
+                    ),
+                    ThoughtAtom(
+                        id="unbridged",
+                        source="chat.jsonl:line[3]",
+                        role="user",
+                        text="A high importance archived implementation note.",
+                        summary="High importance implementation note",
+                        kind="idea",
+                        tags=["implementation"],
+                        timestamp=None,
+                        importance=0.95,
+                        activation=0.1,
+                        metadata={},
+                    ),
+                ]
+            )
+            run_id = store.record_inspire_run(
+                question="How do I validate scout quality?",
+                focus_atom_ids=["focus"],
+                latent_atom_ids=["bridged"],
+                output_text="suggestion_id: 1\ncited_atom_ids: [focus, bridged]",
+            )
+            store.apply_inspire_feedback(
+                run_id,
+                atom_ids=["focus", "bridged"],
+                status="applied",
+                amount=0.4,
+            )
+            store.decay_all(factor=0.2, floor=0.05)
+
+            candidates = store.latent_candidates(
+                "How do I validate scout quality?",
+                limit=1,
+                focus_atom_ids=["focus"],
+            )
+
+        self.assertEqual(candidates[0].id, "bridged")
+
 
 if __name__ == "__main__":
     unittest.main()

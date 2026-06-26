@@ -44,6 +44,37 @@ class GraphExportTests(unittest.TestCase):
         self.assertEqual(active["state"], "focus")
         self.assertEqual(latent["state"], "latent")
 
+    def test_graph_payload_marks_inspire_feedback_edges(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            store = MemoryStore(Path(tmp) / "memory.sqlite")
+            store.upsert_atoms(
+                [
+                    make_atom("focus", "Scout eval", ["scout"], 0.5),
+                    make_atom("latent", "Go bridge", ["go"], 0.2, "analogy"),
+                ]
+            )
+            run_id = store.record_inspire_run(
+                question="How should this bridge be tested?",
+                focus_atom_ids=["focus"],
+                latent_atom_ids=["latent"],
+                output_text="Use the go bridge.",
+            )
+            store.apply_inspire_feedback(
+                run_id,
+                atom_ids=["focus", "latent"],
+                status="applied",
+                note="This bridge changed the next step.",
+            )
+
+            payload = graph_payload(store, limit=10)
+            edge = payload["edges"][0]
+
+        self.assertEqual(edge["relation"], "inspire_feedback")
+        self.assertEqual(edge["type"], "inspire_feedback")
+        self.assertEqual(edge["status"], "applied")
+        self.assertGreater(edge["confidence"], 0)
+        self.assertEqual(edge["evidence"]["run_id"], run_id)
+
     def test_export_graph_html_writes_interactive_canvas_page(self):
         with tempfile.TemporaryDirectory() as tmp:
             store = MemoryStore(Path(tmp) / "memory.sqlite")
@@ -65,6 +96,38 @@ class GraphExportTests(unittest.TestCase):
         self.assertIn("Latent path", html)
         self.assertIn("Focus", html)
         self.assertIn("Latent", html)
+
+    def test_export_graph_html_labels_inspire_feedback_edges(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            store = MemoryStore(Path(tmp) / "memory.sqlite")
+            out = Path(tmp) / "graph.html"
+            store.upsert_atoms(
+                [
+                    make_atom("focus", "Scout eval", ["scout"], 0.5),
+                    make_atom("latent", "Go bridge", ["go"], 0.2, "analogy"),
+                ]
+            )
+            run_id = store.record_inspire_run(
+                question="How should this bridge be tested?",
+                focus_atom_ids=["focus"],
+                latent_atom_ids=["latent"],
+                output_text="Use the go bridge.",
+            )
+            store.apply_inspire_feedback(
+                run_id,
+                atom_ids=["focus", "latent"],
+                status="useful",
+                note="This bridge changed the next step.",
+            )
+
+            export_graph_html(store, out, limit=10)
+            html = out.read_text(encoding="utf-8")
+
+        self.assertIn("Inspire bridge", html)
+        self.assertIn("pickEdge", html)
+        self.assertIn("showEdgeDetails", html)
+        self.assertIn("inspire_feedback", html)
+        self.assertIn("This bridge changed the next step.", html)
 
 
 if __name__ == "__main__":

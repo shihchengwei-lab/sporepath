@@ -4,12 +4,21 @@ import json
 import math
 import re
 import sqlite3
+import uuid
 from contextlib import closing
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Iterable
 
 from .models import DigestedNote, Edge, ThoughtAtom
+
+
+POSITIVE_INSPIRE_STATUSES = {
+    "selected": 0.14,
+    "useful": 0.18,
+    "applied": 0.28,
+}
+VALID_INSPIRE_STATUSES = set(POSITIVE_INSPIRE_STATUSES) | {"boring", "wrong", "ignored"}
 
 
 class MemoryStore:
@@ -155,18 +164,27 @@ class MemoryStore:
             ).fetchall()
         return [self._row_to_atom(row) for row in rows]
 
-    def latent_candidates(self, question: str, *, limit: int = 12, active_ceiling: float = 0.45) -> list[ThoughtAtom]:
+    def latent_candidates(
+        self,
+        question: str,
+        *,
+        limit: int = 12,
+        active_ceiling: float = 0.45,
+        focus_atom_ids: Iterable[str] | None = None,
+    ) -> list[ThoughtAtom]:
+        focus_ids = set(focus_atom_ids or [])
         atoms = self.list_atoms()
-        latent = [atom for atom in atoms if atom.activation <= active_ceiling]
-        pool = latent or atoms
+        latent = [atom for atom in atoms if atom.activation <= active_ceiling and atom.id not in focus_ids]
+        pool = latent or [atom for atom in atoms if atom.id not in focus_ids] or atoms
+        bridge_boosts = self._inspire_feedback_boosts(focus_ids)
         reliable = sorted(
             pool,
-            key=lambda atom: self._reliable_latent_score(question, atom),
+            key=lambda atom: self._reliable_latent_score(question, atom) + bridge_boosts.get(atom.id, 0.0),
             reverse=True,
         )
         weird = sorted(
             pool,
-            key=lambda atom: self._weird_bridge_score(question, atom),
+            key=lambda atom: self._weird_bridge_score(question, atom) + bridge_boosts.get(atom.id, 0.0),
             reverse=True,
         )
         return _interleave_unique([reliable, weird], limit=limit)
@@ -194,6 +212,201 @@ class MemoryStore:
                 [(amount, now, note_id) for note_id in ids],
             )
             con.commit()
+
+    def record_inspire_run(
+        self,
+        *,
+        question: str,
+        focus_atom_ids: Iterable[str],
+        latent_atom_ids: Iterable[str],
+        output_text: str = "",
+    ) -> str:
+        run_id = uuid.uuid4().hex[:16]
+        now = _now()
+        with closing(self._connect()) as con:
+            con.execute(
+                """
+                INSERT INTO inspire_runs (
+                    id, question, focus_atom_ids, latent_atom_ids, output_text,
+                    created_at, updated_at
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    run_id,
+                    question,
+                    json.dumps(list(focus_atom_ids), ensure_ascii=False),
+                    json.dumps(list(latent_atom_ids), ensure_ascii=False),
+                    output_text,
+                    now,
+                    now,
+                ),
+            )
+            con.commit()
+        return run_id
+
+    def record_inspire_suggestions(self, run_id: str, suggestions: Iterable[dict[str, object]]) -> int:
+        rows = []
+        for suggestion in suggestions:
+            suggestion_id = str(suggestion.get("suggestion_id", "")).strip()
+            cited_atom_ids = [str(atom_id) for atom_id in suggestion.get("cited_atom_ids", [])]
+            if not suggestion_id or not cited_atom_ids:
+                continue
+            rows.append(
+                (
+                    run_id,
+                    suggestion_id,
+                    str(suggestion.get("text", "")),
+                    json.dumps(cited_atom_ids, ensure_ascii=False),
+                    _now(),
+                )
+            )
+        if not rows:
+            return 0
+        with closing(self._connect()) as con:
+            run = con.execute("SELECT id FROM inspire_runs WHERE id = ?", (run_id,)).fetchone()
+            if run is None:
+                raise KeyError(run_id)
+            con.executemany(
+                """
+                INSERT INTO inspire_suggestions (
+                    run_id, suggestion_id, text, cited_atom_ids, created_at
+                )
+                VALUES (?, ?, ?, ?, ?)
+                ON CONFLICT(run_id, suggestion_id) DO UPDATE SET
+                    text = excluded.text,
+                    cited_atom_ids = excluded.cited_atom_ids
+                """,
+                rows,
+            )
+            con.commit()
+        return len(rows)
+
+    def get_inspire_suggestion(self, run_id: str, suggestion_id: str) -> dict[str, object]:
+        with closing(self._connect()) as con:
+            row = con.execute(
+                """
+                SELECT run_id, suggestion_id, text, cited_atom_ids
+                FROM inspire_suggestions
+                WHERE run_id = ? AND suggestion_id = ?
+                """,
+                (run_id, suggestion_id),
+            ).fetchone()
+        if row is None:
+            raise KeyError(f"{run_id}:{suggestion_id}")
+        return {
+            "run_id": row["run_id"],
+            "suggestion_id": row["suggestion_id"],
+            "text": row["text"],
+            "cited_atom_ids": json.loads(row["cited_atom_ids"]),
+        }
+
+    def apply_inspire_feedback(
+        self,
+        run_id: str,
+        *,
+        atom_ids: Iterable[str] | None = None,
+        suggestion_id: str | None = None,
+        status: str,
+        note: str = "",
+        amount: float | None = None,
+    ) -> dict[str, int]:
+        normalized_status = status.strip().casefold()
+        if normalized_status not in VALID_INSPIRE_STATUSES:
+            raise ValueError(f"unsupported inspire feedback status: {status}")
+
+        suggestion_atom_ids: list[str] = []
+        normalized_suggestion_id = suggestion_id.strip() if suggestion_id else None
+        if normalized_suggestion_id:
+            suggestion = self.get_inspire_suggestion(run_id, normalized_suggestion_id)
+            suggestion_atom_ids = [str(atom_id) for atom_id in suggestion["cited_atom_ids"]]
+
+        ids = sorted(dict.fromkeys([*(atom_ids or []), *suggestion_atom_ids]))
+        if not ids:
+            raise ValueError("inspire feedback requires at least one atom id or suggestion id")
+
+        with closing(self._connect()) as con:
+            run = con.execute("SELECT id FROM inspire_runs WHERE id = ?", (run_id,)).fetchone()
+            if run is None:
+                raise KeyError(run_id)
+            missing = [
+                atom_id
+                for atom_id in ids
+                if con.execute("SELECT id FROM atoms WHERE id = ?", (atom_id,)).fetchone() is None
+            ]
+            if missing:
+                raise KeyError(", ".join(missing))
+
+        feedback_amount = (
+            amount
+            if amount is not None
+            else POSITIVE_INSPIRE_STATUSES.get(normalized_status, 0.0)
+        )
+        now = _now()
+        feedback_id = uuid.uuid4().hex[:16]
+        bridges = _pairs(ids) if normalized_status in POSITIVE_INSPIRE_STATUSES else []
+
+        with closing(self._connect()) as con:
+            con.execute(
+                """
+                INSERT INTO inspire_feedback (
+                    id, run_id, status, atom_ids, note, amount, created_at
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    feedback_id,
+                    run_id,
+                    normalized_status,
+                    json.dumps(ids, ensure_ascii=False),
+                    note,
+                    feedback_amount,
+                    now,
+                ),
+            )
+            if normalized_status in POSITIVE_INSPIRE_STATUSES and feedback_amount > 0:
+                con.executemany(
+                    "UPDATE atoms SET activation = min(1.0, activation + ?), updated_at = ? WHERE id = ?",
+                    [(feedback_amount, now, atom_id) for atom_id in ids],
+                )
+                for left, right in bridges:
+                    evidence = {
+                        "type": "inspire_feedback",
+                        "run_id": run_id,
+                        "feedback_id": feedback_id,
+                        "status": normalized_status,
+                        "atom_ids": [left, right],
+                        "note": note,
+                    }
+                    if normalized_suggestion_id:
+                        evidence["suggestion_id"] = normalized_suggestion_id
+                    con.execute(
+                        """
+                        INSERT INTO edges (
+                            from_id, to_id, relation, weight, last_used, evidence, confidence
+                        )
+                        VALUES (?, ?, 'inspire_feedback', ?, ?, ?, ?)
+                        ON CONFLICT(from_id, to_id, relation) DO UPDATE SET
+                            weight = min(1.0, edges.weight + excluded.weight),
+                            last_used = excluded.last_used,
+                            evidence = excluded.evidence,
+                            confidence = min(0.95, edges.confidence + excluded.confidence * 0.25)
+                        """,
+                        (
+                            left,
+                            right,
+                            min(1.0, feedback_amount),
+                            now,
+                            json.dumps(evidence, ensure_ascii=False),
+                            round(min(0.95, 0.55 + feedback_amount), 3),
+                        ),
+                    )
+            con.execute("UPDATE inspire_runs SET updated_at = ? WHERE id = ?", (now, run_id))
+            con.commit()
+        return {
+            "atoms_touched": len(ids) if normalized_status in POSITIVE_INSPIRE_STATUSES else 0,
+            "bridges_strengthened": len(bridges),
+        }
 
     def decay_all(self, *, factor: float = 0.92, floor: float = 0.05) -> int:
         with closing(self._connect()) as con:
@@ -241,7 +454,7 @@ class MemoryStore:
                 )
 
         with closing(self._connect()) as con:
-            con.execute("DELETE FROM edges")
+            con.execute("DELETE FROM edges WHERE relation LIKE 'shared_tags:%'")
             con.executemany(
                 """
                 INSERT INTO edges (from_id, to_id, relation, weight, last_used, evidence, confidence)
@@ -331,6 +544,44 @@ class MemoryStore:
                 )
                 """
             )
+            con.execute(
+                """
+                CREATE TABLE IF NOT EXISTS inspire_runs (
+                    id TEXT PRIMARY KEY,
+                    question TEXT NOT NULL,
+                    focus_atom_ids TEXT NOT NULL,
+                    latent_atom_ids TEXT NOT NULL,
+                    output_text TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                )
+                """
+            )
+            con.execute(
+                """
+                CREATE TABLE IF NOT EXISTS inspire_feedback (
+                    id TEXT PRIMARY KEY,
+                    run_id TEXT NOT NULL,
+                    status TEXT NOT NULL,
+                    atom_ids TEXT NOT NULL,
+                    note TEXT NOT NULL,
+                    amount REAL NOT NULL,
+                    created_at TEXT NOT NULL
+                )
+                """
+            )
+            con.execute(
+                """
+                CREATE TABLE IF NOT EXISTS inspire_suggestions (
+                    run_id TEXT NOT NULL,
+                    suggestion_id TEXT NOT NULL,
+                    text TEXT NOT NULL,
+                    cited_atom_ids TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    PRIMARY KEY (run_id, suggestion_id)
+                )
+                """
+            )
             con.commit()
 
     def _ensure_column(self, con: sqlite3.Connection, table: str, column: str, definition: str) -> None:
@@ -416,6 +667,30 @@ class MemoryStore:
         low_importance_bonus = 1.0 - min(1.0, atom.importance)
         return (novelty * 0.55) + (bridge * 0.3) + (low_importance_bonus * 0.15)
 
+    def _inspire_feedback_boosts(self, focus_atom_ids: Iterable[str]) -> dict[str, float]:
+        focus_ids = sorted(dict.fromkeys(focus_atom_ids))
+        if not focus_ids:
+            return {}
+        placeholders = ", ".join("?" for _ in focus_ids)
+        with closing(self._connect()) as con:
+            rows = con.execute(
+                f"""
+                SELECT from_id, to_id, weight
+                FROM edges
+                WHERE relation = 'inspire_feedback'
+                  AND (from_id IN ({placeholders}) OR to_id IN ({placeholders}))
+                """,
+                [*focus_ids, *focus_ids],
+            ).fetchall()
+        boosts: dict[str, float] = {}
+        focus_set = set(focus_ids)
+        for row in rows:
+            other_id = row["to_id"] if row["from_id"] in focus_set else row["from_id"]
+            if other_id in focus_set:
+                continue
+            boosts[other_id] = max(boosts.get(other_id, 0.0), min(1.0, row["weight"]) * 1.2)
+        return boosts
+
 
 def _interleave_unique(pools: list[list[ThoughtAtom]], *, limit: int) -> list[ThoughtAtom]:
     result: list[ThoughtAtom] = []
@@ -438,6 +713,14 @@ def _interleave_unique(pools: list[list[ThoughtAtom]], *, limit: int) -> list[Th
             break
         index += 1
     return result
+
+
+def _pairs(ids: list[str]) -> list[tuple[str, str]]:
+    pairs: list[tuple[str, str]] = []
+    for index, left in enumerate(ids):
+        for right in ids[index + 1 :]:
+            pairs.append((left, right) if left <= right else (right, left))
+    return pairs
 
 
 def _tag_overlap(question: str, atom: ThoughtAtom) -> float:

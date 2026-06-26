@@ -109,7 +109,10 @@ def _read_jsonl_turns(path: Path) -> Iterable[dict[str, Any]]:
     for index, line in enumerate(path.read_text(encoding="utf-8").splitlines()):
         if not line.strip():
             continue
-        row = json.loads(line)
+        try:
+            row = json.loads(line)
+        except json.JSONDecodeError:
+            continue
         if isinstance(row, dict) and "messages" in row:
             yield from _read_messages(path, row["messages"], prefix=f"{path.name}:line[{index}]")
             continue
@@ -232,7 +235,7 @@ def _atom_from_signal(
 ) -> ThoughtAtom:
     atom_id = hashlib.sha1(f"{source}\n{text}".encode("utf-8")).hexdigest()[:16]
     importance = round(min(0.95, max(0.05, 0.25 + signal.confidence * 0.55)), 3)
-    summary = signal.summary or summarize(text)
+    summary = signal.handoff or signal.summary or summarize(text)
     return ThoughtAtom(
         id=atom_id,
         source=source,
@@ -249,6 +252,10 @@ def _atom_from_signal(
             "extractor": "local-llm",
             "extractor_confidence": signal.confidence,
             "extractor_reason": signal.reason,
+            "extractor_route": signal.route,
+            "extractor_signals": signal.signals,
+            "extractor_noise": signal.noise,
+            "extractor_handoff": signal.handoff,
         },
     )
 

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import re
 import shutil
 import subprocess
 from dataclasses import dataclass
@@ -39,6 +40,10 @@ def build_inspiration_prompt(
 - 每一手都要引用至少一個候選片段的 id 或 source。
 - 說清楚：舊片段、為什麼現在可能重新有用、跟當前問題的橋、下一步怎麼驗證。
 - 如果候選片段都沒用，直接說不夠好，並說需要什麼資料。
+
+請讓每一手都包含這兩個欄位，方便之後把你選中的橋加粗：
+suggestion_id: 1
+cited_atom_ids: [atom_id_1, atom_id_2]
 """
 
 
@@ -90,7 +95,78 @@ def codex_command(args: list[str]) -> list[str]:
 
 def _format_atom(atom: ThoughtAtom) -> str:
     tags = ", ".join(atom.tags)
+    metadata = atom.metadata or {}
+    scout_parts = []
+    route = metadata.get("extractor_route")
+    if route:
+        scout_parts.append(f"route={route}")
+    signals = _metadata_list(metadata.get("extractor_signals"))
+    if signals:
+        scout_parts.append(f"signals=[{', '.join(signals)}]")
+    handoff = metadata.get("extractor_handoff")
+    if handoff:
+        scout_parts.append(f"handoff={handoff}")
+    noise = _metadata_list(metadata.get("extractor_noise"))
+    if noise:
+        scout_parts.append(f"noise=[{', '.join(noise)}]")
+    scout = f" scout=({' ; '.join(scout_parts)})" if scout_parts else ""
     return (
         f"- id={atom.id} source={atom.source} kind={atom.kind} "
-        f"activation={atom.activation:.2f} tags=[{tags}] summary={atom.summary}"
+        f"activation={atom.activation:.2f} tags=[{tags}] summary={atom.summary}{scout}"
     )
+
+
+def parse_inspiration_suggestions(
+    output: str,
+    *,
+    known_atom_ids: set[str] | None = None,
+) -> list[dict[str, object]]:
+    lines = output.splitlines()
+    start_indexes: list[tuple[int, str]] = []
+    for index, line in enumerate(lines):
+        match = re.match(r"\s*suggestion_id\s*:\s*([A-Za-z0-9_.-]+)\s*$", line, re.IGNORECASE)
+        if match:
+            start_indexes.append((index, match.group(1)))
+
+    suggestions: list[dict[str, object]] = []
+    for offset, (start, suggestion_id) in enumerate(start_indexes):
+        end = start_indexes[offset + 1][0] if offset + 1 < len(start_indexes) else len(lines)
+        block_lines = [line.rstrip() for line in lines[start:end]]
+        while block_lines and not block_lines[-1].strip():
+            block_lines.pop()
+        block = "\n".join(block_lines).strip()
+        cited_line = ""
+        for line in block_lines:
+            match = re.match(r"\s*cited_atom_ids\s*:\s*(.+?)\s*$", line, re.IGNORECASE)
+            if match:
+                cited_line = match.group(1)
+                break
+        cited_atom_ids = _extract_cited_atom_ids(cited_line, known_atom_ids=known_atom_ids)
+        if cited_atom_ids:
+            suggestions.append(
+                {
+                    "suggestion_id": suggestion_id,
+                    "cited_atom_ids": cited_atom_ids,
+                    "text": block,
+                }
+            )
+    return suggestions
+
+
+def _extract_cited_atom_ids(value: str, *, known_atom_ids: set[str] | None) -> list[str]:
+    if not value:
+        return []
+    if known_atom_ids is not None:
+        found = [atom_id for atom_id in known_atom_ids if re.search(rf"(?<![\w.-]){re.escape(atom_id)}(?![\w.-])", value)]
+        return sorted(found, key=lambda atom_id: value.find(atom_id))
+    cleaned = value.strip().strip("[]")
+    tokens = [token.strip().strip("'\"`") for token in re.split(r"[,\s]+", cleaned)]
+    return [token for token in tokens if token]
+
+
+def _metadata_list(value: object) -> list[str]:
+    if isinstance(value, list):
+        return [str(item) for item in value if str(item)]
+    if isinstance(value, str) and value:
+        return [value]
+    return []

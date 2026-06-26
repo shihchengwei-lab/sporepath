@@ -93,6 +93,7 @@ class RefreshTests(unittest.TestCase):
         self.assertEqual(code, 0)
         self.assertIn("Sporepath desktop app", out.getvalue())
         self.assertIn("real_memory.sqlite", out.getvalue())
+        self.assertIn("arcrift=", out.getvalue())
 
 
 if __name__ == "__main__":

@@ -2,20 +2,26 @@ from __future__ import annotations
 
 import argparse
 import shutil
+import sqlite3
 import subprocess
 import sys
+import time
 import urllib.error
 import urllib.request
 from pathlib import Path
 
+from .arcrift_import import extract_atoms_from_arcrift_db
 from .app_config import default_app_config
-from .codex_adapter import build_inspiration_prompt, codex_command, run_codex_exec
+from .automation import sync_arcrift_memory
+from .codex_adapter import build_inspiration_prompt, codex_command, parse_inspiration_suggestions, run_codex_exec
+from .evaluation import build_extraction_eval, score_eval_sheet
 from .extractors import OllamaExtractor
 from .graph_export import export_graph_html
 from .ingest import extract_atoms_from_file
 from .notes import build_notes_from_atoms
 from .refresh import refresh_memory
 from .source_discovery import discover_sources, sources_for_labels
+from .source_watch import build_source_snapshot, source_snapshot_changed
 from .store import MemoryStore
 from .vault_export import export_obsidian_vault, sync_obsidian_vault
 
@@ -38,6 +44,38 @@ def main(argv: list[str] | None = None) -> int:
     ingest.add_argument("--model", default="qwen3:1.7b", help="Local Ollama model for --extractor ollama.")
     ingest.add_argument("--ollama-host", default="http://127.0.0.1:11434")
     ingest.add_argument("--min-confidence", type=float, default=0.55)
+
+    import_arcrift = sub.add_parser("import-arcrift", help="Import full chats from an ArcRift SQLite database.")
+    import_arcrift.add_argument("path")
+    import_arcrift.add_argument("--project", default=None, help="Optional ArcRift project name or session id to import.")
+    import_arcrift.add_argument("--min-chars", type=int, default=12)
+    import_arcrift.add_argument("--max-turns", type=int, default=None)
+    import_arcrift.add_argument("--extractor", choices=["rules", "ollama"], default="rules")
+    import_arcrift.add_argument("--model", default="qwen3:1.7b", help="Local Ollama model for --extractor ollama.")
+    import_arcrift.add_argument("--ollama-host", default="http://127.0.0.1:11434")
+    import_arcrift.add_argument("--min-confidence", type=float, default=0.55)
+
+    sync_arcrift = sub.add_parser("sync-arcrift", help="Import ArcRift DB, rebuild notes, export vault, and refresh graph once.")
+    sync_arcrift.add_argument("--arcrift-db", default=None, help="Path to ArcRift.db. Auto-detected when omitted.")
+    sync_arcrift.add_argument("--project", default=None, help="Optional ArcRift project name or session id to import.")
+    sync_arcrift.add_argument("--vault", default=None, help="Optional Obsidian vault output path.")
+    sync_arcrift.add_argument("--graph", default=None, help="Optional graph HTML output path.")
+    sync_arcrift.add_argument("--min-chars", type=int, default=12)
+    sync_arcrift.add_argument("--max-turns", type=int, default=None)
+    sync_arcrift.add_argument("--min-note-atoms", type=int, default=1)
+    sync_arcrift.add_argument("--max-note-points", type=int, default=5)
+
+    watch_arcrift = sub.add_parser("watch-arcrift", help="Continuously sync ArcRift DB into notes and graph.")
+    watch_arcrift.add_argument("--arcrift-db", default=None, help="Path to ArcRift.db. Auto-detected when omitted.")
+    watch_arcrift.add_argument("--project", default=None, help="Optional ArcRift project name or session id to import.")
+    watch_arcrift.add_argument("--vault", default=None, help="Optional Obsidian vault output path.")
+    watch_arcrift.add_argument("--graph", default=None, help="Optional graph HTML output path.")
+    watch_arcrift.add_argument("--interval-s", type=float, default=20.0)
+    watch_arcrift.add_argument("--once", action="store_true", help="Run one sync and exit.")
+    watch_arcrift.add_argument("--min-chars", type=int, default=12)
+    watch_arcrift.add_argument("--max-turns", type=int, default=None)
+    watch_arcrift.add_argument("--min-note-atoms", type=int, default=1)
+    watch_arcrift.add_argument("--max-note-points", type=int, default=5)
 
     focus = sub.add_parser("focus", help="Show currently thick focus paths.")
     focus.add_argument("--limit", type=int, default=8)
@@ -73,6 +111,38 @@ def main(argv: list[str] | None = None) -> int:
     refresh.add_argument("--min-note-atoms", type=int, default=2)
     refresh.add_argument("--max-note-points", type=int, default=5)
 
+    watch_sources = sub.add_parser("watch-sources", help="Continuously refresh from local Codex/Claude/JSONL sources.")
+    watch_sources.add_argument("--input", action="append", default=[], help="Additional JSON/JSONL file or directory to watch.")
+    watch_sources.add_argument("--source", action="append", default=[], help="Auto-detected source family or label: all, codex, claude, codex_history, claude_projects, etc.")
+    watch_sources.add_argument("--home", default=None, help="Override home directory for source detection.")
+    watch_sources.add_argument("--vault", default=None, help="Optional Obsidian vault output path.")
+    watch_sources.add_argument("--graph", default=None, help="Optional graph HTML output path.")
+    watch_sources.add_argument("--interval-s", type=float, default=20.0)
+    watch_sources.add_argument("--once", action="store_true", help="Run one refresh and exit.")
+    watch_sources.add_argument("--min-chars", type=int, default=12)
+    watch_sources.add_argument("--max-turns", type=int, default=None)
+    watch_sources.add_argument("--min-note-atoms", type=int, default=2)
+    watch_sources.add_argument("--max-note-points", type=int, default=5)
+
+    eval_extract = sub.add_parser("eval-extract", help="Build an extraction eval sheet from chat sources.")
+    eval_extract.add_argument("--input", action="append", default=[], help="JSON/JSONL file or directory to sample.")
+    eval_extract.add_argument("--source", action="append", default=[], help="Auto-detected source family or label.")
+    eval_extract.add_argument("--home", default=None, help="Override home directory for source detection.")
+    eval_extract.add_argument("--out", default="eval/extraction_eval.jsonl", help="Output JSONL eval sheet.")
+    eval_extract.add_argument("--report", default=None, help="Optional Markdown review report path.")
+    eval_extract.add_argument("--limit", type=int, default=20)
+    eval_extract.add_argument("--min-chars", type=int, default=40)
+    eval_extract.add_argument("--max-chars", type=int, default=1600, help="Skip fragments longer than this; use 0 to disable.")
+    eval_extract.add_argument("--max-turns", type=int, default=None)
+    eval_extract.add_argument("--contains", action="append", default=[], help="Only include fragments containing this keyword; can be repeated.")
+    eval_extract.add_argument("--extractor", choices=["rules", "ollama"], default="rules")
+    eval_extract.add_argument("--model", default="qwen3:1.7b", help="Local Ollama model for --extractor ollama.")
+    eval_extract.add_argument("--ollama-host", default="http://127.0.0.1:11434")
+    eval_extract.add_argument("--min-confidence", type=float, default=0.55)
+
+    eval_score = sub.add_parser("eval-score", help="Summarize a filled extraction eval JSONL sheet.")
+    eval_score.add_argument("path")
+
     app = sub.add_parser("app", help="Open the small Sporepath desktop window.")
     app.add_argument("--dry-run", action="store_true", help="Print the app defaults without opening a window.")
 
@@ -97,6 +167,14 @@ def main(argv: list[str] | None = None) -> int:
     inspire.add_argument("--latent-limit", type=int, default=12)
     inspire.add_argument("--dry-run", action="store_true", help="Print the Codex prompt without running Codex.")
     inspire.add_argument("--timeout-s", type=int, default=300)
+
+    inspire_feedback = sub.add_parser("inspire-feedback", help="Mark an inspire result as useful/applied and strengthen selected bridges.")
+    inspire_feedback.add_argument("run_id")
+    inspire_feedback.add_argument("--status", required=True, choices=["selected", "useful", "applied", "boring", "wrong", "ignored"])
+    inspire_feedback.add_argument("--atoms", nargs="+", default=None, help="Atom ids cited by the selected idea.")
+    inspire_feedback.add_argument("--suggestion", default=None, help="Suggestion id printed inside the inspire result.")
+    inspire_feedback.add_argument("--note", default="")
+    inspire_feedback.add_argument("--amount", type=float, default=None)
 
     sub.add_parser("stats", help="Show database counts.")
     sub.add_parser("doctor", help="Check local CLI assumptions.")
@@ -129,6 +207,67 @@ def main(argv: list[str] | None = None) -> int:
             f"rebuilt {edges} edges."
         )
         return 0
+
+    if args.command == "import-arcrift":
+        extractor = None
+        if args.extractor == "ollama":
+            extractor = OllamaExtractor(
+                model=args.model,
+                host=args.ollama_host,
+                min_confidence=args.min_confidence,
+            )
+        try:
+            atoms = extract_atoms_from_arcrift_db(
+                args.path,
+                min_chars=args.min_chars,
+                extractor=extractor,
+                max_turns=args.max_turns,
+                project=args.project,
+            )
+        except (FileNotFoundError, ValueError, sqlite3.DatabaseError) as exc:
+            print(str(exc), file=sys.stderr)
+            return 2
+        inserted = store.upsert_atoms(atoms)
+        edges = store.rebuild_edges()
+        project_label = f" project={args.project}" if args.project else ""
+        print(
+            f"Imported {inserted} ArcRift thought atoms{project_label} "
+            f"with extractor={args.extractor}; rebuilt {edges} edges."
+        )
+        return 0
+
+    if args.command in {"sync-arcrift", "watch-arcrift"}:
+        config = default_app_config(args.db)
+        vault_path = args.vault if args.vault is not None else str(config.vault_path)
+        graph_path = args.graph if args.graph is not None else str(config.graph_path)
+        while True:
+            try:
+                result = sync_arcrift_memory(
+                    db_path=args.db,
+                    arcrift_db_path=args.arcrift_db,
+                    vault_path=vault_path,
+                    graph_path=graph_path,
+                    min_chars=args.min_chars,
+                    max_turns=args.max_turns,
+                    min_note_atoms=args.min_note_atoms,
+                    max_note_points=args.max_note_points,
+                    project=args.project,
+                )
+            except (FileNotFoundError, ValueError, sqlite3.DatabaseError) as exc:
+                print(str(exc), file=sys.stderr)
+                return 2
+            print(
+                "ArcRift sync complete: "
+                f"imported={result.atoms_imported} atoms={result.atoms_after} "
+                f"edges={result.edges_rebuilt} notes={result.notes_built} "
+                f"vault_notes={result.vault_notes_exported}"
+            )
+            if result.graph_path:
+                print(f"Graph: {result.graph_path.resolve()}")
+            if args.command == "sync-arcrift" or args.once:
+                return 0
+            sys.stdout.flush()
+            time.sleep(max(1.0, args.interval_s))
 
     if args.command == "focus":
         _print_atoms(store.focus_atoms(limit=args.limit))
@@ -219,6 +358,95 @@ def main(argv: list[str] | None = None) -> int:
             print(f"Graph: {result.graph_path.resolve()}")
         return 0
 
+    if args.command == "watch-sources":
+        config = default_app_config(args.db)
+        vault_path = args.vault if args.vault is not None else str(config.vault_path)
+        graph_path = args.graph if args.graph is not None else str(config.graph_path)
+        source_labels = args.source if args.source else ["all"]
+        source_paths = [*sources_for_labels(source_labels, home=args.home), *args.input]
+        if not source_paths:
+            print("No local source paths found. Use --source codex/claude/all or --input <path>.", file=sys.stderr)
+            return 2
+
+        snapshot = None
+        while True:
+            should_refresh = snapshot is None or args.once or source_snapshot_changed(snapshot, source_paths)
+            if should_refresh:
+                try:
+                    result = refresh_memory(
+                        db_path=args.db,
+                        input_paths=source_paths,
+                        vault_path=vault_path,
+                        graph_path=graph_path,
+                        min_chars=args.min_chars,
+                        max_turns=args.max_turns,
+                        min_note_atoms=args.min_note_atoms,
+                        max_note_points=args.max_note_points,
+                    )
+                except ValueError as exc:
+                    print(str(exc), file=sys.stderr)
+                    return 2
+                snapshot = build_source_snapshot(source_paths)
+                print(
+                    "Source sync complete: "
+                    f"imported={result.atoms_imported} atoms={result.atoms_after} "
+                    f"edges={result.edges_rebuilt} notes={result.notes_built} "
+                    f"vault_notes={result.vault_notes_exported}"
+                )
+                if result.graph_path:
+                    print(f"Graph: {result.graph_path.resolve()}")
+                sys.stdout.flush()
+            if args.once:
+                return 0
+            time.sleep(max(1.0, args.interval_s))
+
+    if args.command == "eval-extract":
+        source_candidates = sources_for_labels(args.source, home=args.home) if args.source else []
+        input_paths = [*args.input, *[source.path for source in source_candidates]]
+        if not input_paths:
+            print("No eval input. Use --input <path> or --source codex/claude/all.", file=sys.stderr)
+            return 2
+        extractor = None
+        if args.extractor == "ollama":
+            extractor = OllamaExtractor(
+                model=args.model,
+                host=args.ollama_host,
+                min_confidence=args.min_confidence,
+            )
+        try:
+            result = build_extraction_eval(
+                input_paths=input_paths,
+                out_path=args.out,
+                report_path=args.report,
+                extractor=extractor,
+                extractor_name=args.extractor,
+                limit=args.limit,
+                min_chars=args.min_chars,
+                max_chars=args.max_chars if args.max_chars > 0 else None,
+                max_turns=args.max_turns,
+                contains=args.contains,
+            )
+        except ValueError as exc:
+            print(str(exc), file=sys.stderr)
+            return 2
+        print(f"Eval cases: {result.cases_written}")
+        print(f"JSONL: {result.jsonl_path.resolve()}")
+        print(f"Report: {result.report_path.resolve()}")
+        return 0
+
+    if args.command == "eval-score":
+        result = score_eval_sheet(args.path)
+        print(
+            f"scored={result.scored_cases}/{result.total_cases} "
+            f"pass_rate={result.pass_rate:.1%} "
+            f"keep_agreement={result.keep_agreement:.1%} "
+            f"route_agreement={result.route_agreement:.1%} "
+            f"signal_found={result.signal_found_rate:.1%} "
+            f"noise_marked={result.noise_marked_rate:.1%} "
+            f"handoff_sufficient={result.handoff_sufficient_rate:.1%}"
+        )
+        return 0
+
     if args.command == "sources":
         candidates = discover_sources(home=args.home)
         if not candidates:
@@ -233,6 +461,7 @@ def main(argv: list[str] | None = None) -> int:
         if args.dry_run:
             print("Sporepath desktop app")
             print(f"db={config.db_path}")
+            print(f"arcrift={config.arcrift_path or ''}")
             print(f"vault={config.vault_path}")
             print(f"graph={config.graph_path}")
             return 0
@@ -258,7 +487,12 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.command == "inspire":
         focus_atoms = store.focus_atoms(limit=args.focus_limit)
-        latent_atoms = store.latent_candidates(args.question, limit=args.latent_limit)
+        focus_atom_ids = [atom.id for atom in focus_atoms]
+        latent_atoms = store.latent_candidates(
+            args.question,
+            limit=args.latent_limit,
+            focus_atom_ids=focus_atom_ids,
+        )
         if not focus_atoms and not latent_atoms:
             print(
                 "memory database is empty; ingest a ChatGPT/Claude/Codex export first, "
@@ -285,8 +519,48 @@ def main(argv: list[str] | None = None) -> int:
             print(result.stderr, file=sys.stderr)
         print(result.stdout)
         if result.returncode == 0:
+            latent_atom_ids = [atom.id for atom in latent_atoms]
+            run_id = store.record_inspire_run(
+                question=args.question,
+                focus_atom_ids=focus_atom_ids,
+                latent_atom_ids=latent_atom_ids,
+                output_text=result.stdout,
+            )
+            suggestions = parse_inspiration_suggestions(
+                result.stdout,
+                known_atom_ids=set(focus_atom_ids + latent_atom_ids),
+            )
+            suggestion_count = store.record_inspire_suggestions(run_id, suggestions)
             store.touch_atoms([atom.id for atom in focus_atoms + latent_atoms[:3]], amount=0.08)
+            suggestion_ids = ",".join(str(suggestion["suggestion_id"]) for suggestion in suggestions)
+            suffix = f" suggestions={suggestion_ids}" if suggestion_count else ""
+            print(f"\ninspire_run={run_id}{suffix}")
         return result.returncode
+
+    if args.command == "inspire-feedback":
+        try:
+            result = store.apply_inspire_feedback(
+                args.run_id,
+                atom_ids=args.atoms,
+                suggestion_id=args.suggestion,
+                status=args.status,
+                note=args.note,
+                amount=args.amount,
+            )
+        except (KeyError, ValueError) as exc:
+            print(str(exc), file=sys.stderr)
+            return 2
+        parts = ["Inspire feedback recorded:", f"status={args.status}"]
+        if args.suggestion:
+            parts.append(f"suggestion={args.suggestion}")
+        parts.extend(
+            [
+                f"atoms_touched={result['atoms_touched']}",
+                f"bridges_strengthened={result['bridges_strengthened']}",
+            ]
+        )
+        print(" ".join(parts))
+        return 0
 
     if args.command == "stats":
         stats = store.stats()

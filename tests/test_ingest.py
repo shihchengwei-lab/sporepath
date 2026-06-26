@@ -92,6 +92,32 @@ class IngestTests(unittest.TestCase):
         self.assertIn("poc", atoms[0].tags)
         self.assertGreater(atoms[0].importance, 0.0)
 
+    def test_skips_malformed_jsonl_lines(self):
+        rows = [
+            json.dumps(
+                {
+                    "role": "user",
+                    "content": "Local source watcher should keep useful memory even if one JSONL line is broken.",
+                }
+            ),
+            '{"role": "assistant", "content": "unterminated',
+            json.dumps(
+                {
+                    "role": "assistant",
+                    "content": "壞掉的 jsonl 行不應該讓整個同步流程停止。",
+                },
+                ensure_ascii=False,
+            ),
+        ]
+
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "chat.jsonl"
+            path.write_text("\n".join(rows), encoding="utf-8")
+
+            atoms = extract_atoms_from_file(path)
+
+        self.assertEqual([atom.role for atom in atoms], ["user", "assistant"])
+
     def test_skips_tool_notifications_before_extractor(self):
         class FailingExtractor:
             def extract(self, _text, role="unknown"):
