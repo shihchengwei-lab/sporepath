@@ -83,6 +83,9 @@ class LauncherTests(unittest.TestCase):
 
         self.assertIn("eval-extract", text)
         self.assertIn("--source all", text)
+        self.assertIn("SPOREPATH_EVAL_LIMIT=50", text)
+        self.assertIn("--per-file-limit", text)
+        self.assertIn("--checkpoint-every", text)
         self.assertIn("qwen3.5:4b", text)
         self.assertIn("eval\\qwen35_4b_eval.jsonl", text)
 

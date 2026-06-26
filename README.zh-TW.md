@@ -457,7 +457,7 @@ python -m sporepath eval-extract --source codex --limit 20 `
 Run-Sporepath-Qwen35-Eval.bat
 ```
 
-它會用 `qwen3.5:4b` 從白名單本地來源抽樣，輸出 `eval\qwen35_4b_eval.jsonl` 和 `eval\qwen35_4b_eval.md`。
+它會用 `qwen3.5:4b` 從白名單本地來源抽 50 筆、每個檔案最多 1 筆，並且每完成 1 筆就 checkpoint。輸出是 `eval\qwen35_4b_eval.jsonl` 和 `eval\qwen35_4b_eval.md`。
 
 看完 Markdown 後，把 JSONL 裡的 `human` 欄位補上，再統計：
 

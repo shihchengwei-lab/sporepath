@@ -5,7 +5,9 @@ set "PYTHONPATH=src"
 set "SPOREPATH_EVAL_MODEL=qwen3.5:4b"
 set "SPOREPATH_EVAL_OUT=eval\qwen35_4b_eval.jsonl"
 set "SPOREPATH_EVAL_REPORT=eval\qwen35_4b_eval.md"
-set "SPOREPATH_EVAL_LIMIT=20"
+set "SPOREPATH_EVAL_LIMIT=50"
+set "SPOREPATH_EVAL_PER_FILE_LIMIT=1"
+set "SPOREPATH_EVAL_CHECKPOINT_EVERY=1"
 set "SPOREPATH_EVAL_MIN_CHARS=80"
 set "SPOREPATH_EVAL_MAX_CHARS=1400"
 set "SPOREPATH_OLLAMA_TIMEOUT=180"
@@ -27,6 +29,8 @@ if errorlevel 1 (
 python -m sporepath eval-extract ^
   --source all ^
   --limit "%SPOREPATH_EVAL_LIMIT%" ^
+  --per-file-limit "%SPOREPATH_EVAL_PER_FILE_LIMIT%" ^
+  --checkpoint-every "%SPOREPATH_EVAL_CHECKPOINT_EVERY%" ^
   --min-chars "%SPOREPATH_EVAL_MIN_CHARS%" ^
   --max-chars "%SPOREPATH_EVAL_MAX_CHARS%" ^
   --extractor ollama ^

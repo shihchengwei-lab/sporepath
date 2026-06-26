@@ -2,6 +2,7 @@ import io
 import json
 import tempfile
 import unittest
+from collections import Counter
 from contextlib import redirect_stdout
 from pathlib import Path
 
@@ -132,6 +133,69 @@ class EvaluationTests(unittest.TestCase):
 
         self.assertEqual(result.cases_written, 1)
         self.assertIn("restore", rows[0]["text"])
+
+    def test_build_extraction_eval_can_limit_cases_per_file(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            first = root / "a.jsonl"
+            second = root / "b.jsonl"
+            out = root / "eval.jsonl"
+            first.write_text(
+                "\n".join(
+                    json.dumps({"role": "user", "content": f"first reusable memory {index}"})
+                    for index in range(4)
+                ),
+                encoding="utf-8",
+            )
+            second.write_text(
+                "\n".join(
+                    json.dumps({"role": "user", "content": f"second reusable memory {index}"})
+                    for index in range(4)
+                ),
+                encoding="utf-8",
+            )
+
+            result = build_extraction_eval(
+                input_paths=[root],
+                out_path=out,
+                limit=4,
+                min_chars=5,
+                per_file_limit=2,
+            )
+            records = [json.loads(line) for line in out.read_text(encoding="utf-8").splitlines()]
+            counts = Counter(Path(record["source_file"]).name for record in records)
+
+        self.assertEqual(result.cases_written, 4)
+        self.assertEqual(counts["a.jsonl"], 2)
+        self.assertEqual(counts["b.jsonl"], 2)
+
+    def test_build_extraction_eval_accepts_checkpoint_writes(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            chat = Path(tmp) / "chat.jsonl"
+            out = Path(tmp) / "eval.jsonl"
+            report = Path(tmp) / "eval.md"
+            chat.write_text(
+                "\n".join(
+                    json.dumps({"role": "user", "content": f"checkpoint reusable memory {index}"})
+                    for index in range(3)
+                ),
+                encoding="utf-8",
+            )
+
+            result = build_extraction_eval(
+                input_paths=[chat],
+                out_path=out,
+                report_path=report,
+                limit=3,
+                min_chars=5,
+                checkpoint_every=1,
+            )
+            rows = [json.loads(line) for line in out.read_text(encoding="utf-8").splitlines()]
+            report_exists = report.exists()
+
+        self.assertEqual(result.cases_written, 3)
+        self.assertEqual(len(rows), 3)
+        self.assertTrue(report_exists)
 
     def test_score_eval_sheet_summarizes_human_scores(self):
         with tempfile.TemporaryDirectory() as tmp:

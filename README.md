@@ -529,7 +529,8 @@ For the current middle-ground scout, run:
 Run-Sporepath-Qwen35-Eval.bat
 ```
 
-That samples allowlisted local sources with `qwen3.5:4b` and writes
+That samples 50 allowlisted local sources with `qwen3.5:4b`, caps the sample at
+one case per file, checkpoints after every case, and writes
 `eval\qwen35_4b_eval.jsonl` plus `eval\qwen35_4b_eval.md`.
 
 After reviewing the Markdown, fill the `human` fields in the JSONL file, then

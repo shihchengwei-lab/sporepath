@@ -239,6 +239,8 @@ def main(argv: list[str] | None = None) -> int:
     eval_extract.add_argument("--min-chars", type=int, default=40)
     eval_extract.add_argument("--max-chars", type=int, default=1600, help="Skip fragments longer than this; use 0 to disable.")
     eval_extract.add_argument("--max-turns", type=int, default=None)
+    eval_extract.add_argument("--per-file-limit", type=int, default=None, help="Maximum eval cases to take from each source file.")
+    eval_extract.add_argument("--checkpoint-every", type=int, default=None, help="Write partial JSONL/Markdown output every N cases.")
     eval_extract.add_argument("--contains", action="append", default=[], help="Only include fragments containing this keyword; can be repeated.")
     eval_extract.add_argument("--extractor", choices=["rules", "ollama"], default="rules")
     eval_extract.add_argument("--model", default="qwen3:1.7b", help="Local Ollama model for --extractor ollama.")
@@ -634,6 +636,8 @@ def main(argv: list[str] | None = None) -> int:
                 min_chars=args.min_chars,
                 max_chars=args.max_chars if args.max_chars > 0 else None,
                 max_turns=args.max_turns,
+                per_file_limit=args.per_file_limit,
+                checkpoint_every=args.checkpoint_every,
                 contains=args.contains,
             )
         except ValueError as exc:

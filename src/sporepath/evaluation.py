@@ -45,18 +45,28 @@ def build_extraction_eval(
     min_chars: int = 40,
     max_chars: int | None = 1600,
     max_turns: int | None = None,
+    per_file_limit: int | None = None,
+    checkpoint_every: int | None = None,
     contains: Iterable[str] | None = None,
 ) -> ExtractionEvalResult:
     files = expand_source_files(input_paths)
     if not files:
         raise ValueError("no JSON/JSONL input files found for eval")
 
+    jsonl_path = Path(out_path)
+    markdown_path = Path(report_path) if report_path is not None else jsonl_path.with_suffix(".md")
+    jsonl_path.parent.mkdir(parents=True, exist_ok=True)
+    markdown_path.parent.mkdir(parents=True, exist_ok=True)
+
     records: list[dict[str, Any]] = []
     needles = [needle.casefold() for needle in (contains or []) if needle.strip()]
     for source_file in files:
         turns_read = 0
+        cases_from_file = 0
         for turn in _read_turns(source_file):
             if max_turns is not None and turns_read >= max_turns:
+                break
+            if per_file_limit is not None and cases_from_file >= per_file_limit:
                 break
             turns_read += 1
             text = _clean_text(turn["text"])
@@ -81,15 +91,15 @@ def build_extraction_eval(
                     "human": _blank_human_review(),
                 }
             )
+            cases_from_file += 1
+            if checkpoint_every and len(records) % checkpoint_every == 0:
+                _write_jsonl(jsonl_path, records)
+                _write_markdown(markdown_path, records)
             if len(records) >= limit:
                 break
         if len(records) >= limit:
             break
 
-    jsonl_path = Path(out_path)
-    markdown_path = Path(report_path) if report_path is not None else jsonl_path.with_suffix(".md")
-    jsonl_path.parent.mkdir(parents=True, exist_ok=True)
-    markdown_path.parent.mkdir(parents=True, exist_ok=True)
     _write_jsonl(jsonl_path, records)
     _write_markdown(markdown_path, records)
     return ExtractionEvalResult(
