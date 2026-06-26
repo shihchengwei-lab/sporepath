@@ -26,6 +26,9 @@ thicken, fade, or sink into archive.
   - a deterministic rules baseline, or
   - a local Ollama model such as `qwen3:1.7b`.
 - Stores atoms and shared-tag edges in SQLite.
+- Builds readable `digested notes` from atoms, so you can review old chats
+  without opening the full conversation log.
+- Exports digested notes to a local Obsidian-compatible Markdown vault.
 - Tracks `activation`, a rough path-strength score.
 - Produces a local interactive HTML graph.
 - Uses `codex exec` only for optional inspiration bridging, so an existing
@@ -46,6 +49,39 @@ $env:PYTHONPATH = "src"
 python -m sporepath doctor
 ```
 
+## Low-Friction Desktop Flow
+
+On Windows, double-click:
+
+```text
+Sporepath.bat
+```
+
+This opens a small local window with three everyday actions:
+
+- **Refresh Now**: rebuild notes, export the Obsidian vault, and refresh the graph.
+- **Open Vault**: open the Markdown vault folder for Obsidian.
+- **Inspire**: enter a stuck question and ask Codex for weird-but-bridged next moves.
+
+The batch launcher uses `real_memory.sqlite` in this checkout by default. The
+window still lets you edit the DB, chat export, vault, and graph paths before
+running anything.
+
+Use **Auto-detect Sources** to find local Codex and Claude conversation stores.
+Sporepath only uses an allowlist of likely conversation sources:
+
+```text
+{home}/.codex/history.jsonl
+{home}/.codex/sessions/
+{home}/.codex/archived_sessions/
+{home}/.claude/history.jsonl
+{home}/.claude/projects/
+{home}/.claude/sessions/
+```
+
+It deliberately ignores credentials, auth files, settings, logs, caches, and
+other non-conversation files.
+
 ## Quick Start
 
 Try the included sample first:
@@ -53,6 +89,8 @@ Try the included sample first:
 ```powershell
 $env:PYTHONPATH = "src"
 python -m sporepath --db sample_memory.sqlite ingest examples\sample_chat.jsonl
+python -m sporepath --db sample_memory.sqlite digest
+python -m sporepath --db sample_memory.sqlite notes
 python -m sporepath --db sample_memory.sqlite focus
 python -m sporepath --db sample_memory.sqlite graph --out graph.html
 ```
@@ -66,6 +104,8 @@ For a ChatGPT export saved in your Downloads folder:
 ```powershell
 $chat = "$env:USERPROFILE\Downloads\conversations.json"
 python -m sporepath --db my_memory.sqlite ingest $chat
+python -m sporepath --db my_memory.sqlite digest
+python -m sporepath --db my_memory.sqlite notes
 python -m sporepath --db my_memory.sqlite stats
 python -m sporepath --db my_memory.sqlite focus
 ```
@@ -85,6 +125,87 @@ why it kept an atom:
 ```powershell
 python -m sporepath --db qwen_trial.sqlite show <atom-id>
 ```
+
+## Digested Notes
+
+Raw conversations are too long to review. Thought atoms are useful for scoring
+and linking, but too small to read as notes. Digested notes are the middle
+layer:
+
+```text
+raw chat / JSONL
+    -> thought atoms
+    -> digested notes
+    -> focus and latent graph
+```
+
+Build notes from the atoms already in your database:
+
+```powershell
+python -m sporepath --db my_memory.sqlite digest
+python -m sporepath --db my_memory.sqlite notes
+python -m sporepath --db my_memory.sqlite show-note <note-id>
+```
+
+Current note generation is deliberately simple and local. It groups atoms by
+topic, keeps source atom ids and source spans, and produces rough note types:
+
+- `concept_note`
+- `decision_note`
+- `friction_note`
+
+These notes are not treated as permanent truth. They are readable byproducts of
+the memory metabolism layer, and can be rebuilt as extraction improves.
+
+## Refresh Pipeline
+
+`refresh` is the one-step pipeline behind the desktop button:
+
+```powershell
+python -m sporepath --db my_memory.sqlite refresh `
+  --input "$env:USERPROFILE\Downloads\conversations.json" `
+  --vault "$env:USERPROFILE\Documents\Sporepath Vault" `
+  --graph sporepath_graph.html
+```
+
+If your database already has atoms, `--input` is optional. Without it, refresh
+rebuilds edges, notes, vault export, and graph from the existing database.
+
+You can also ask Sporepath to detect Codex/Claude sources:
+
+```powershell
+python -m sporepath sources
+python -m sporepath --db my_memory.sqlite refresh --source codex --source claude `
+  --vault "$env:USERPROFILE\Documents\Sporepath Vault" `
+  --graph sporepath_graph.html
+```
+
+`--source` is explicit on purpose. A plain `refresh` does not scan your
+home directory unless you ask for sources.
+
+## Obsidian Vault Export
+
+Sporepath does not need to become a note-taking app. It can export digested
+notes into a plain Markdown vault that Obsidian can open directly:
+
+```powershell
+python -m sporepath --db my_memory.sqlite export-vault "$env:USERPROFILE\Documents\Sporepath Vault"
+```
+
+The export writes:
+
+```text
+Sporepath Vault/
+  Digested Notes/
+    concept-note-memory-metabolism-abc1234.md
+  .sporepath/
+    manifest.json
+```
+
+Each note includes YAML frontmatter with `sporepath_id`, `type`, `state`,
+`activation`, `tags`, `source_atoms`, and `source_spans`. Obsidian is the human
+reading/editing surface; SQLite remains the source of truth for activation,
+focus/latent scoring, and future inspire behavior.
 
 ## Inspiration Bridge
 
@@ -149,6 +270,12 @@ The `.gitignore` is set up to ignore the common generated files, but review
 
 - Edges are currently shared-tag links, not true semantic embeddings.
 - `qwen3:1.7b` can extract useful candidates, but it also creates noise.
+- `digest` is currently rules-based grouping, not high-quality editorial
+  summarization.
+- `export-vault` is one-way Markdown export, not an Obsidian plugin or sync
+  engine.
+- The desktop window is a local tkinter launcher, not a packaged Windows
+  installer yet.
 - There is no eval UI yet; manual inspection with `focus` and `show` is still
   required.
 - Archive/deep-archive budgets are design goals, not complete product features.

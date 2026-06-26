@@ -8,11 +8,16 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 
+from .app_config import default_app_config
 from .codex_adapter import build_inspiration_prompt, codex_command, run_codex_exec
 from .extractors import OllamaExtractor
 from .graph_export import export_graph_html
 from .ingest import extract_atoms_from_file
+from .notes import build_notes_from_atoms
+from .refresh import refresh_memory
+from .source_discovery import discover_sources, sources_for_labels
 from .store import MemoryStore
+from .vault_export import export_obsidian_vault
 
 
 DEFAULT_DB = Path("memory.sqlite")
@@ -39,6 +44,36 @@ def main(argv: list[str] | None = None) -> int:
 
     show = sub.add_parser("show", help="Show one thought atom by id.")
     show.add_argument("id")
+
+    digest = sub.add_parser("digest", help="Build readable notes from thought atoms.")
+    digest.add_argument("--min-atoms", type=int, default=2)
+    digest.add_argument("--max-points", type=int, default=5)
+
+    notes = sub.add_parser("notes", help="List readable digested notes.")
+    notes.add_argument("--limit", type=int, default=12)
+
+    show_note = sub.add_parser("show-note", help="Show one digested note by id.")
+    show_note.add_argument("id")
+
+    export_vault = sub.add_parser("export-vault", help="Export digested notes as an Obsidian Markdown vault.")
+    export_vault.add_argument("path")
+
+    refresh = sub.add_parser("refresh", help="Run ingest, digest, vault export, and graph export in one step.")
+    refresh.add_argument("--input", default=None, help="Optional chat export path to ingest before refreshing.")
+    refresh.add_argument("--source", action="append", default=[], help="Auto-detected source family or label: all, codex, claude, codex_history, claude_projects, etc.")
+    refresh.add_argument("--home", default=None, help="Override home directory for source detection.")
+    refresh.add_argument("--vault", default=None, help="Optional Obsidian vault output path.")
+    refresh.add_argument("--graph", default=None, help="Optional graph HTML output path.")
+    refresh.add_argument("--min-chars", type=int, default=12)
+    refresh.add_argument("--max-turns", type=int, default=None)
+    refresh.add_argument("--min-note-atoms", type=int, default=2)
+    refresh.add_argument("--max-note-points", type=int, default=5)
+
+    app = sub.add_parser("app", help="Open the small Sporepath desktop window.")
+    app.add_argument("--dry-run", action="store_true", help="Print the app defaults without opening a window.")
+
+    sources = sub.add_parser("sources", help="List allowlisted Codex/Claude conversation sources.")
+    sources.add_argument("--home", default=None, help="Override home directory for source detection.")
 
     graph = sub.add_parser("graph", help="Export an interactive local HTML graph.")
     graph.add_argument("--out", default="graph.html")
@@ -104,6 +139,92 @@ def main(argv: list[str] | None = None) -> int:
         _print_atom_detail(atom)
         return 0
 
+    if args.command == "digest":
+        atoms = store.list_atoms()
+        if not atoms:
+            print("memory database is empty; ingest chats before building notes.")
+            return 2
+        notes = build_notes_from_atoms(
+            atoms,
+            min_atoms=args.min_atoms,
+            max_points=args.max_points,
+        )
+        inserted = store.replace_notes(notes)
+        print(f"Built {inserted} digested notes from {len(atoms)} thought atoms.")
+        return 0
+
+    if args.command == "notes":
+        _print_notes(store.list_notes(limit=args.limit))
+        return 0
+
+    if args.command == "show-note":
+        try:
+            note = store.get_note(args.id)
+        except KeyError:
+            print(f"note not found: {args.id}", file=sys.stderr)
+            return 2
+        _print_note_detail(note)
+        return 0
+
+    if args.command == "export-vault":
+        try:
+            result = export_obsidian_vault(store, args.path)
+        except ValueError as exc:
+            print(str(exc))
+            return 2
+        print(f"Exported {result.notes_exported} notes to {result.path.resolve()}")
+        print(f"Manifest: {result.manifest_path.resolve()}")
+        return 0
+
+    if args.command == "refresh":
+        source_candidates = sources_for_labels(args.source, home=args.home) if args.source else []
+        try:
+            result = refresh_memory(
+                db_path=args.db,
+                input_path=args.input,
+                input_paths=[source.path for source in source_candidates],
+                vault_path=args.vault,
+                graph_path=args.graph,
+                min_chars=args.min_chars,
+                max_turns=args.max_turns,
+                min_note_atoms=args.min_note_atoms,
+                max_note_points=args.max_note_points,
+            )
+        except ValueError as exc:
+            print(str(exc))
+            return 2
+        print(
+            "Refresh complete: "
+            f"imported={result.atoms_imported} atoms={result.atoms_after} "
+            f"edges={result.edges_rebuilt} notes={result.notes_built} "
+            f"vault_notes={result.vault_notes_exported}"
+        )
+        if result.graph_path:
+            print(f"Graph: {result.graph_path.resolve()}")
+        return 0
+
+    if args.command == "sources":
+        candidates = discover_sources(home=args.home)
+        if not candidates:
+            print("No allowlisted Codex/Claude conversation sources found.")
+            return 0
+        for source in candidates:
+            print(f"{source.label}\t{source.kind}\t{source.path}")
+        return 0
+
+    if args.command == "app":
+        config = default_app_config(args.db)
+        if args.dry_run:
+            print("Sporepath desktop app")
+            print(f"db={config.db_path}")
+            print(f"vault={config.vault_path}")
+            print(f"graph={config.graph_path}")
+            return 0
+        from .app import run_app
+
+        run_app(config)
+        return 0
+
     if args.command == "graph":
         out = export_graph_html(store, args.out, limit=args.limit)
         print(f"Wrote {out.resolve()}")
@@ -153,7 +274,7 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.command == "stats":
         stats = store.stats()
-        print(f"atoms={stats['atoms']} edges={stats['edges']}")
+        print(f"atoms={stats['atoms']} edges={stats['edges']} notes={stats['notes']}")
         return 0
 
     if args.command == "doctor":
@@ -188,6 +309,15 @@ def _print_atoms(atoms) -> None:
         )
 
 
+def _print_notes(notes) -> None:
+    for note in notes:
+        tags = ", ".join(note.tags)
+        print(
+            f"{note.id} [{note.note_type}] activation={note.activation:.2f} "
+            f"tags=[{tags}] {note.title}"
+        )
+
+
 def _print_atom_detail(atom) -> None:
     tags = ", ".join(atom.tags)
     print(f"id: {atom.id}")
@@ -209,6 +339,40 @@ def _print_atom_detail(atom) -> None:
         print("metadata:")
         for key in sorted(atom.metadata):
             print(f"{key}: {atom.metadata[key]}")
+
+
+def _print_note_detail(note) -> None:
+    tags = ", ".join(note.tags)
+    print(f"id: {note.id}")
+    print(f"type: {note.note_type}")
+    print(f"title: {note.title}")
+    print(f"tags: [{tags}]")
+    print(f"activation: {note.activation:.2f}")
+    print("")
+    print("summary:")
+    print(note.summary)
+    print("")
+    print("key points:")
+    for point in note.key_points:
+        print(f"- {point}")
+    if note.open_questions:
+        print("")
+        print("open questions:")
+        for question in note.open_questions:
+            print(f"- {question}")
+    print("")
+    print("source atoms:")
+    for atom_id in note.source_atom_ids:
+        print(f"- {atom_id}")
+    print("")
+    print("source spans:")
+    for source in note.source_spans:
+        print(f"- {source}")
+    if note.metadata:
+        print("")
+        print("metadata:")
+        for key in sorted(note.metadata):
+            print(f"{key}: {note.metadata[key]}")
 
 
 def _ollama_status(host: str = "http://127.0.0.1:11434") -> str:

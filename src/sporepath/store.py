@@ -8,7 +8,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Iterable
 
-from .models import Edge, ThoughtAtom
+from .models import DigestedNote, Edge, ThoughtAtom
 
 
 class MemoryStore:
@@ -51,6 +51,73 @@ class MemoryStore:
         if row is None:
             raise KeyError(atom_id)
         return self._row_to_atom(row)
+
+    def upsert_notes(self, notes: Iterable[DigestedNote]) -> int:
+        rows = list(notes)
+        with closing(self._connect()) as con:
+            con.executemany(
+                """
+                INSERT INTO notes (
+                    id, title, note_type, summary, key_points, open_questions,
+                    tags, source_atom_ids, source_spans, activation, metadata,
+                    created_at, updated_at
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(id) DO UPDATE SET
+                    title = excluded.title,
+                    note_type = excluded.note_type,
+                    summary = excluded.summary,
+                    key_points = excluded.key_points,
+                    open_questions = excluded.open_questions,
+                    tags = excluded.tags,
+                    source_atom_ids = excluded.source_atom_ids,
+                    source_spans = excluded.source_spans,
+                    activation = max(notes.activation, excluded.activation),
+                    metadata = excluded.metadata,
+                    updated_at = excluded.updated_at
+                """,
+                [self._note_row(note) for note in rows],
+            )
+            con.commit()
+        return len(rows)
+
+    def replace_notes(self, notes: Iterable[DigestedNote]) -> int:
+        rows = list(notes)
+        with closing(self._connect()) as con:
+            con.execute("DELETE FROM notes")
+            con.executemany(
+                """
+                INSERT INTO notes (
+                    id, title, note_type, summary, key_points, open_questions,
+                    tags, source_atom_ids, source_spans, activation, metadata,
+                    created_at, updated_at
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                [self._note_row(note) for note in rows],
+            )
+            con.commit()
+        return len(rows)
+
+    def get_note(self, note_id: str) -> DigestedNote:
+        with closing(self._connect()) as con:
+            row = con.execute("SELECT * FROM notes WHERE id = ?", (note_id,)).fetchone()
+        if row is None:
+            raise KeyError(note_id)
+        return self._row_to_note(row)
+
+    def list_notes(self, *, limit: int | None = None) -> list[DigestedNote]:
+        sql = """
+            SELECT * FROM notes
+            ORDER BY activation DESC, updated_at DESC, title ASC
+        """
+        params: tuple[int, ...] = ()
+        if limit is not None:
+            sql += " LIMIT ?"
+            params = (limit,)
+        with closing(self._connect()) as con:
+            rows = con.execute(sql, params).fetchall()
+        return [self._row_to_note(row) for row in rows]
 
     def list_atoms(self) -> list[ThoughtAtom]:
         with closing(self._connect()) as con:
@@ -114,9 +181,14 @@ class MemoryStore:
                 "UPDATE atoms SET activation = max(?, activation * ?), updated_at = ?",
                 (floor, factor, _now()),
             )
-            changed = con.execute("SELECT changes()").fetchone()[0]
+            atom_changes = con.execute("SELECT changes()").fetchone()[0]
+            con.execute(
+                "UPDATE notes SET activation = max(?, activation * ?), updated_at = ?",
+                (floor, factor, _now()),
+            )
+            note_changes = con.execute("SELECT changes()").fetchone()[0]
             con.commit()
-            return changed
+            return atom_changes + note_changes
 
     def rebuild_edges(self, *, min_shared_tags: int = 1) -> int:
         atoms = self.list_atoms()
@@ -147,7 +219,8 @@ class MemoryStore:
         with closing(self._connect()) as con:
             atoms = con.execute("SELECT COUNT(*) FROM atoms").fetchone()[0]
             edges = con.execute("SELECT COUNT(*) FROM edges").fetchone()[0]
-        return {"atoms": atoms, "edges": edges}
+            notes = con.execute("SELECT COUNT(*) FROM notes").fetchone()[0]
+        return {"atoms": atoms, "edges": edges, "notes": notes}
 
     def _connect(self) -> sqlite3.Connection:
         con = sqlite3.connect(self.path)
@@ -187,6 +260,25 @@ class MemoryStore:
                 )
                 """
             )
+            con.execute(
+                """
+                CREATE TABLE IF NOT EXISTS notes (
+                    id TEXT PRIMARY KEY,
+                    title TEXT NOT NULL,
+                    note_type TEXT NOT NULL,
+                    summary TEXT NOT NULL,
+                    key_points TEXT NOT NULL,
+                    open_questions TEXT NOT NULL,
+                    tags TEXT NOT NULL,
+                    source_atom_ids TEXT NOT NULL,
+                    source_spans TEXT NOT NULL,
+                    activation REAL NOT NULL,
+                    metadata TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                )
+                """
+            )
             con.commit()
 
     def _atom_row(self, atom: ThoughtAtom) -> tuple:
@@ -218,6 +310,39 @@ class MemoryStore:
             tags=json.loads(row["tags"]),
             timestamp=row["timestamp"],
             importance=row["importance"],
+            activation=row["activation"],
+            metadata=json.loads(row["metadata"]),
+        )
+
+    def _note_row(self, note: DigestedNote) -> tuple:
+        now = _now()
+        return (
+            note.id,
+            note.title,
+            note.note_type,
+            note.summary,
+            json.dumps(note.key_points, ensure_ascii=False),
+            json.dumps(note.open_questions, ensure_ascii=False),
+            json.dumps(note.tags, ensure_ascii=False),
+            json.dumps(note.source_atom_ids, ensure_ascii=False),
+            json.dumps(note.source_spans, ensure_ascii=False),
+            note.activation,
+            json.dumps(note.metadata, ensure_ascii=False),
+            now,
+            now,
+        )
+
+    def _row_to_note(self, row: sqlite3.Row) -> DigestedNote:
+        return DigestedNote(
+            id=row["id"],
+            title=row["title"],
+            note_type=row["note_type"],
+            summary=row["summary"],
+            key_points=json.loads(row["key_points"]),
+            open_questions=json.loads(row["open_questions"]),
+            tags=json.loads(row["tags"]),
+            source_atom_ids=json.loads(row["source_atom_ids"]),
+            source_spans=json.loads(row["source_spans"]),
             activation=row["activation"],
             metadata=json.loads(row["metadata"]),
         )

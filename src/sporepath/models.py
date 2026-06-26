@@ -20,6 +20,21 @@ class ThoughtAtom:
 
 
 @dataclass(frozen=True)
+class DigestedNote:
+    id: str
+    title: str
+    note_type: str
+    summary: str
+    key_points: list[str]
+    open_questions: list[str]
+    tags: list[str]
+    source_atom_ids: list[str]
+    source_spans: list[str]
+    activation: float
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
 class Edge:
     from_id: str
     to_id: str
