@@ -6,9 +6,9 @@ import io
 from pathlib import Path
 
 from sporepath.cli import main
-from sporepath.models import DigestedNote
+from sporepath.models import DigestedNote, ThoughtAtom
 from sporepath.store import MemoryStore
-from sporepath.vault_export import export_obsidian_vault
+from sporepath.vault_export import export_obsidian_vault, sync_obsidian_vault
 
 
 class VaultExportTests(unittest.TestCase):
@@ -104,6 +104,108 @@ class VaultExportTests(unittest.TestCase):
         self.assertEqual(code, 0)
         self.assertIn("Exported 1 notes", out.getvalue())
         self.assertTrue(exported_note_exists)
+
+    def test_cli_syncs_vault_feedback(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            db = Path(tmp) / "memory.sqlite"
+            vault = Path(tmp) / "Vault"
+            store = MemoryStore(db)
+            store.upsert_atoms(
+                [
+                    ThoughtAtom(
+                        id="a1",
+                        source="chat.jsonl:line[1]",
+                        role="user",
+                        text="Useful atom",
+                        summary="Useful atom",
+                        kind="idea",
+                        tags=["memory"],
+                        timestamp=None,
+                        importance=0.5,
+                        activation=0.1,
+                        metadata={},
+                    )
+                ]
+            )
+            store.upsert_notes(
+                [
+                    DigestedNote(
+                        id="note1234567890",
+                        title="Concept note: memory metabolism",
+                        note_type="concept_note",
+                        summary="A note",
+                        key_points=["Useful atom"],
+                        open_questions=[],
+                        tags=["memory"],
+                        source_atom_ids=["a1"],
+                        source_spans=["chat.jsonl:line[1]"],
+                        activation=0.2,
+                        metadata={},
+                    )
+                ]
+            )
+            export_obsidian_vault(store, vault)
+            note_path = vault / "Digested Notes" / "concept-note-memory-metabolism-note123.md"
+            note_path.write_text(note_path.read_text(encoding="utf-8") + "\nUser edit.\n", encoding="utf-8")
+            out = io.StringIO()
+
+            with redirect_stdout(out):
+                code = main(["--db", str(db), "sync-vault", str(vault), "--touch-amount", "0.4"])
+
+            updated = MemoryStore(db).get_atom("a1")
+
+        self.assertEqual(code, 0)
+        self.assertIn("Synced 1 modified notes", out.getvalue())
+        self.assertGreaterEqual(updated.activation, 0.49)
+
+    def test_sync_vault_touches_source_atoms_for_modified_notes(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            db = Path(tmp) / "memory.sqlite"
+            vault = Path(tmp) / "Vault"
+            store = MemoryStore(db)
+            store.upsert_atoms(
+                [
+                    ThoughtAtom(
+                        id="a1",
+                        source="chat.jsonl:line[1]",
+                        role="user",
+                        text="Useful atom",
+                        summary="Useful atom",
+                        kind="idea",
+                        tags=["memory"],
+                        timestamp=None,
+                        importance=0.5,
+                        activation=0.1,
+                        metadata={},
+                    )
+                ]
+            )
+            store.upsert_notes(
+                [
+                    DigestedNote(
+                        id="note1234567890",
+                        title="Concept note: memory metabolism",
+                        note_type="concept_note",
+                        summary="A note",
+                        key_points=["Useful atom"],
+                        open_questions=[],
+                        tags=["memory"],
+                        source_atom_ids=["a1"],
+                        source_spans=["chat.jsonl:line[1]"],
+                        activation=0.2,
+                        metadata={},
+                    )
+                ]
+            )
+            export_obsidian_vault(store, vault)
+            note_path = vault / "Digested Notes" / "concept-note-memory-metabolism-note123.md"
+            note_path.write_text(note_path.read_text(encoding="utf-8") + "\nUser edit.\n", encoding="utf-8")
+
+            changed = sync_obsidian_vault(store, vault, touch_amount=0.4)
+            updated = store.get_atom("a1")
+
+        self.assertEqual(changed.notes_touched, 1)
+        self.assertGreaterEqual(updated.activation, 0.49)
 
 
 if __name__ == "__main__":

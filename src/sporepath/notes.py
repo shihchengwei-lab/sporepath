@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import hashlib
-from collections import defaultdict
+from collections import Counter
 from typing import Iterable
 
 from .models import DigestedNote, ThoughtAtom
@@ -21,13 +21,10 @@ def build_notes_from_atoms(
     min_atoms: int = 2,
     max_points: int = 5,
 ) -> list[DigestedNote]:
-    grouped: dict[str, list[ThoughtAtom]] = defaultdict(list)
-    for atom in atoms:
-        anchor = _anchor_tag(atom)
-        grouped[anchor].append(atom)
+    groups = _tag_components(list(atoms))
 
     notes: list[DigestedNote] = []
-    for anchor, group in sorted(grouped.items()):
+    for anchor, group in sorted(groups, key=lambda item: item[0]):
         ordered = sorted(group, key=lambda atom: (-atom.activation, -atom.importance, atom.id))
         if len(ordered) < min_atoms:
             continue
@@ -84,11 +81,38 @@ def _note_type_for_group(atoms: list[ThoughtAtom]) -> str:
     return "decision_note"
 
 
-def _anchor_tag(atom: ThoughtAtom) -> str:
-    for tag in atom.tags:
-        if tag != "uncategorized":
-            return tag
-    return atom.kind
+def _tag_components(atoms: list[ThoughtAtom]) -> list[tuple[str, list[ThoughtAtom]]]:
+    remaining = list(atoms)
+    components: list[list[ThoughtAtom]] = []
+    while remaining:
+        seed = remaining.pop(0)
+        component = [seed]
+        component_tags = _groupable_tags(seed)
+        changed = True
+        while changed:
+            changed = False
+            rest: list[ThoughtAtom] = []
+            for atom in remaining:
+                tags = _groupable_tags(atom)
+                if component_tags.intersection(tags):
+                    component.append(atom)
+                    component_tags.update(tags)
+                    changed = True
+                else:
+                    rest.append(atom)
+            remaining = rest
+        components.append(component)
+    return [(_component_anchor(component), component) for component in components]
+
+
+def _groupable_tags(atom: ThoughtAtom) -> set[str]:
+    tags = {tag for tag in atom.tags if tag != "uncategorized"}
+    return tags or {atom.kind}
+
+
+def _component_anchor(atoms: list[ThoughtAtom]) -> str:
+    counts = Counter(tag for atom in atoms for tag in _groupable_tags(atom))
+    return sorted(counts.items(), key=lambda item: (-item[1], item[0]))[0][0]
 
 
 def _note_type_title(note_type: str) -> str:

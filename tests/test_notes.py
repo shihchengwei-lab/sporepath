@@ -71,6 +71,18 @@ class NoteBuilderTests(unittest.TestCase):
         self.assertEqual(loaded.key_points, ["First point"])
         self.assertEqual(stats["notes"], 1)
 
+    def test_groups_atoms_by_shared_tag_component_not_first_tag_only(self):
+        atoms = [
+            make_atom("a1", "One side of a bridge", tags=["alpha", "bridge"]),
+            make_atom("a2", "Other side of the same bridge", tags=["beta", "bridge"]),
+        ]
+
+        notes = build_notes_from_atoms(atoms, min_atoms=2)
+
+        self.assertEqual(len(notes), 1)
+        self.assertEqual(notes[0].source_atom_ids, ["a1", "a2"])
+        self.assertIn("bridge", notes[0].tags)
+
     def test_cli_digest_lists_and_shows_notes(self):
         with tempfile.TemporaryDirectory() as tmp:
             db = Path(tmp) / "memory.sqlite"

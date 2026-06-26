@@ -41,3 +41,5 @@ class Edge:
     relation: str
     weight: float
     last_used: str | None = None
+    evidence: dict[str, Any] = field(default_factory=dict)
+    confidence: float = 1.0

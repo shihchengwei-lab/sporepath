@@ -17,6 +17,12 @@ class VaultExportResult:
     manifest_path: Path
 
 
+@dataclass(frozen=True)
+class VaultSyncResult:
+    notes_touched: int
+    atoms_touched: int
+
+
 def export_obsidian_vault(store: MemoryStore, vault_path: str | Path) -> VaultExportResult:
     vault = Path(vault_path)
     notes = store.list_notes()
@@ -33,6 +39,7 @@ def export_obsidian_vault(store: MemoryStore, vault_path: str | Path) -> VaultEx
         filename = _note_filename(note)
         note_path = notes_dir / filename
         note_path.write_text(_render_note_markdown(note), encoding="utf-8")
+        stat = note_path.stat()
         manifest_notes.append(
             {
                 "id": note.id,
@@ -40,6 +47,9 @@ def export_obsidian_vault(store: MemoryStore, vault_path: str | Path) -> VaultEx
                 "type": note.note_type,
                 "activation": note.activation,
                 "path": f"Digested Notes/{filename}",
+                "source_atom_ids": note.source_atom_ids,
+                "mtime_ns": stat.st_mtime_ns,
+                "size": stat.st_size,
             }
         )
 
@@ -52,6 +62,39 @@ def export_obsidian_vault(store: MemoryStore, vault_path: str | Path) -> VaultEx
     }
     manifest_path.write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
     return VaultExportResult(vault, len(notes), manifest_path)
+
+
+def sync_obsidian_vault(
+    store: MemoryStore,
+    vault_path: str | Path,
+    *,
+    touch_amount: float = 0.15,
+) -> VaultSyncResult:
+    vault = Path(vault_path)
+    manifest_path = vault / ".sporepath" / "manifest.json"
+    if not manifest_path.exists():
+        raise ValueError("missing .sporepath/manifest.json; export the vault first")
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    touched_notes: list[str] = []
+    touched_atoms: list[str] = []
+    for entry in manifest.get("notes", []):
+        note_path = vault / entry["path"]
+        if not note_path.exists():
+            continue
+        stat = note_path.stat()
+        if stat.st_mtime_ns == entry.get("mtime_ns") and stat.st_size == entry.get("size"):
+            continue
+        note_id = entry["id"]
+        try:
+            note = store.get_note(note_id)
+        except KeyError:
+            continue
+        touched_notes.append(note_id)
+        touched_atoms.extend(note.source_atom_ids)
+    store.touch_notes(touched_notes, amount=touch_amount)
+    unique_atoms = sorted(set(touched_atoms))
+    store.touch_atoms(unique_atoms, amount=touch_amount)
+    return VaultSyncResult(notes_touched=len(touched_notes), atoms_touched=len(unique_atoms))
 
 
 def _render_note_markdown(note: DigestedNote) -> str:

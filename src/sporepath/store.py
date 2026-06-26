@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import math
+import re
 import sqlite3
 from contextlib import closing
 from datetime import datetime, timezone
@@ -127,7 +128,7 @@ class MemoryStore:
     def list_edges(self) -> list[Edge]:
         with closing(self._connect()) as con:
             rows = con.execute(
-                "SELECT from_id, to_id, relation, weight, last_used FROM edges"
+                "SELECT from_id, to_id, relation, weight, last_used, evidence, confidence FROM edges"
             ).fetchall()
         return [
             Edge(
@@ -136,6 +137,8 @@ class MemoryStore:
                 relation=row["relation"],
                 weight=row["weight"],
                 last_used=row["last_used"],
+                evidence=json.loads(row["evidence"]),
+                confidence=row["confidence"],
             )
             for row in rows
         ]
@@ -156,12 +159,17 @@ class MemoryStore:
         atoms = self.list_atoms()
         latent = [atom for atom in atoms if atom.activation <= active_ceiling]
         pool = latent or atoms
-        scored = sorted(
+        reliable = sorted(
             pool,
-            key=lambda atom: self._latent_score(question, atom),
+            key=lambda atom: self._reliable_latent_score(question, atom),
             reverse=True,
         )
-        return scored[:limit]
+        weird = sorted(
+            pool,
+            key=lambda atom: self._weird_bridge_score(question, atom),
+            reverse=True,
+        )
+        return _interleave_unique([reliable, weird], limit=limit)
 
     def touch_atoms(self, atom_ids: Iterable[str], *, amount: float = 0.2) -> None:
         ids = list(atom_ids)
@@ -172,6 +180,18 @@ class MemoryStore:
             con.executemany(
                 "UPDATE atoms SET activation = min(1.0, activation + ?), updated_at = ? WHERE id = ?",
                 [(amount, now, atom_id) for atom_id in ids],
+            )
+            con.commit()
+
+    def touch_notes(self, note_ids: Iterable[str], *, amount: float = 0.2) -> None:
+        ids = list(note_ids)
+        if not ids:
+            return
+        now = _now()
+        with closing(self._connect()) as con:
+            con.executemany(
+                "UPDATE notes SET activation = min(1.0, activation + ?), updated_at = ? WHERE id = ?",
+                [(amount, now, note_id) for note_id in ids],
             )
             con.commit()
 
@@ -201,16 +221,44 @@ class MemoryStore:
                     continue
                 weight = min(1.0, len(shared) / math.sqrt(max(len(left_tags), 1) * max(len(right.tags), 1)))
                 relation = "shared_tags:" + ",".join(sorted(shared))
-                edges.append(Edge(left.id, right.id, relation, round(weight, 3), _now()))
+                confidence = round(min(0.95, 0.45 + weight * 0.4), 3)
+                evidence = {
+                    "type": "shared_tags",
+                    "shared_tags": sorted(shared),
+                    "left_tags": sorted(left_tags),
+                    "right_tags": sorted(right.tags),
+                }
+                edges.append(
+                    Edge(
+                        left.id,
+                        right.id,
+                        relation,
+                        round(weight, 3),
+                        _now(),
+                        evidence,
+                        confidence,
+                    )
+                )
 
         with closing(self._connect()) as con:
             con.execute("DELETE FROM edges")
             con.executemany(
                 """
-                INSERT INTO edges (from_id, to_id, relation, weight, last_used)
-                VALUES (?, ?, ?, ?, ?)
+                INSERT INTO edges (from_id, to_id, relation, weight, last_used, evidence, confidence)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
                 """,
-                [(edge.from_id, edge.to_id, edge.relation, edge.weight, edge.last_used) for edge in edges],
+                [
+                    (
+                        edge.from_id,
+                        edge.to_id,
+                        edge.relation,
+                        edge.weight,
+                        edge.last_used,
+                        json.dumps(edge.evidence, ensure_ascii=False),
+                        edge.confidence,
+                    )
+                    for edge in edges
+                ],
             )
             con.commit()
         return len(edges)
@@ -256,10 +304,14 @@ class MemoryStore:
                     relation TEXT NOT NULL,
                     weight REAL NOT NULL,
                     last_used TEXT,
+                    evidence TEXT NOT NULL DEFAULT '{}',
+                    confidence REAL NOT NULL DEFAULT 1.0,
                     PRIMARY KEY (from_id, to_id, relation)
                 )
                 """
             )
+            self._ensure_column(con, "edges", "evidence", "TEXT NOT NULL DEFAULT '{}'")
+            self._ensure_column(con, "edges", "confidence", "REAL NOT NULL DEFAULT 1.0")
             con.execute(
                 """
                 CREATE TABLE IF NOT EXISTS notes (
@@ -280,6 +332,11 @@ class MemoryStore:
                 """
             )
             con.commit()
+
+    def _ensure_column(self, con: sqlite3.Connection, table: str, column: str, definition: str) -> None:
+        columns = {row["name"] for row in con.execute(f"PRAGMA table_info({table})").fetchall()}
+        if column not in columns:
+            con.execute(f"ALTER TABLE {table} ADD COLUMN {column} {definition}")
 
     def _atom_row(self, atom: ThoughtAtom) -> tuple:
         now = _now()
@@ -347,11 +404,59 @@ class MemoryStore:
             metadata=json.loads(row["metadata"]),
         )
 
-    def _latent_score(self, question: str, atom: ThoughtAtom) -> float:
+    def _reliable_latent_score(self, question: str, atom: ThoughtAtom) -> float:
         question_folded = question.casefold()
         overlap = sum(1 for tag in atom.tags if tag.casefold() in question_folded)
         novelty = 1.0 - min(1.0, atom.activation)
         return (atom.importance * 0.55) + (novelty * 0.35) + (overlap * 0.1)
+
+    def _weird_bridge_score(self, question: str, atom: ThoughtAtom) -> float:
+        novelty = 1.0 - min(1.0, atom.activation)
+        bridge = max(_tag_overlap(question, atom), _text_overlap(question, atom))
+        low_importance_bonus = 1.0 - min(1.0, atom.importance)
+        return (novelty * 0.55) + (bridge * 0.3) + (low_importance_bonus * 0.15)
+
+
+def _interleave_unique(pools: list[list[ThoughtAtom]], *, limit: int) -> list[ThoughtAtom]:
+    result: list[ThoughtAtom] = []
+    seen: set[str] = set()
+    index = 0
+    while len(result) < limit:
+        added = False
+        for pool in pools:
+            if index >= len(pool):
+                continue
+            atom = pool[index]
+            if atom.id in seen:
+                continue
+            seen.add(atom.id)
+            result.append(atom)
+            added = True
+            if len(result) >= limit:
+                break
+        if not added and all(index >= len(pool) - 1 for pool in pools):
+            break
+        index += 1
+    return result
+
+
+def _tag_overlap(question: str, atom: ThoughtAtom) -> float:
+    folded = question.casefold()
+    return 1.0 if any(tag.casefold() in folded for tag in atom.tags) else 0.0
+
+
+def _text_overlap(question: str, atom: ThoughtAtom) -> float:
+    question_tokens = set(_tokens(question))
+    if not question_tokens:
+        return 0.0
+    atom_tokens = set(_tokens(f"{atom.summary} {atom.text}"))
+    if not atom_tokens:
+        return 0.0
+    return len(question_tokens.intersection(atom_tokens)) / len(question_tokens)
+
+
+def _tokens(text: str) -> list[str]:
+    return [token for token in re.findall(r"[a-zA-Z0-9]{3,}", text.casefold()) if token]
 
 
 def _now() -> str:

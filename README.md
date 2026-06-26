@@ -60,6 +60,7 @@ Sporepath.bat
 This opens a small local window with three everyday actions:
 
 - **Refresh Now**: rebuild notes, export the Obsidian vault, and refresh the graph.
+- **Sync Vault**: treat edited Obsidian notes as usage feedback and thicken their source atoms.
 - **Open Vault**: open the Markdown vault folder for Obsidian.
 - **Inspire**: enter a stuck question and ask Codex for weird-but-bridged next moves.
 
@@ -207,6 +208,16 @@ Each note includes YAML frontmatter with `sporepath_id`, `type`, `state`,
 reading/editing surface; SQLite remains the source of truth for activation,
 focus/latent scoring, and future inspire behavior.
 
+If you edit generated notes in Obsidian, sync that activity back into the
+metabolism layer:
+
+```powershell
+python -m sporepath --db my_memory.sqlite sync-vault "$env:USERPROFILE\Documents\Sporepath Vault"
+```
+
+`sync-vault` compares the exported manifest with current Markdown files. Modified
+notes touch their source atoms, so Obsidian edits become path-strength feedback.
+
 ## Inspiration Bridge
 
 `inspire` sends a compact prompt to `codex exec`. The adapter removes
@@ -268,12 +279,13 @@ The `.gitignore` is set up to ignore the common generated files, but review
 
 ## Current Limits
 
-- Edges are currently shared-tag links, not true semantic embeddings.
+- Edges currently include shared-tag evidence and confidence metadata, but they
+  are still not true semantic embeddings.
 - `qwen3:1.7b` can extract useful candidates, but it also creates noise.
 - `digest` is currently rules-based grouping, not high-quality editorial
   summarization.
-- `export-vault` is one-way Markdown export, not an Obsidian plugin or sync
-  engine.
+- `sync-vault` only uses generated-note file edits as feedback; this is not a
+  full Obsidian plugin or bidirectional sync engine.
 - The desktop window is a local tkinter launcher, not a packaged Windows
   installer yet.
 - There is no eval UI yet; manual inspection with `focus` and `show` is still

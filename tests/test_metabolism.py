@@ -74,6 +74,98 @@ class MetabolismTests(unittest.TestCase):
         self.assertEqual(focus[0].id, "active")
         self.assertEqual(latent[0].id, "latent")
 
+    def test_latent_candidates_include_weird_low_importance_bridge(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            store = MemoryStore(Path(tmp) / "memory.sqlite")
+            store.upsert_atoms(
+                [
+                    ThoughtAtom(
+                        id="reliable",
+                        source="test:reliable",
+                        role="user",
+                        text="High importance forgotten memory about AI notes.",
+                        summary="High importance forgotten memory",
+                        kind="idea",
+                        tags=["ai-memory"],
+                        timestamp=None,
+                        importance=0.92,
+                        activation=0.08,
+                        metadata={},
+                    ),
+                    ThoughtAtom(
+                        id="boring",
+                        source="test:boring",
+                        role="user",
+                        text="Another important but unrelated archived memory.",
+                        summary="Another important archived memory",
+                        kind="idea",
+                        tags=["archive"],
+                        timestamp=None,
+                        importance=0.95,
+                        activation=0.05,
+                        metadata={},
+                    ),
+                    ThoughtAtom(
+                        id="weird",
+                        source="test:weird",
+                        role="user",
+                        text="A small packaging ritual might unlock the product story.",
+                        summary="Packaging ritual unlocks product story",
+                        kind="analogy",
+                        tags=["ritual"],
+                        timestamp=None,
+                        importance=0.18,
+                        activation=0.01,
+                        metadata={},
+                    ),
+                ]
+            )
+
+            candidates = store.latent_candidates("Need a packaging ritual idea", limit=2)
+
+        self.assertIn("weird", [atom.id for atom in candidates])
+
+    def test_edges_include_evidence_and_confidence(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            store = MemoryStore(Path(tmp) / "memory.sqlite")
+            store.upsert_atoms(
+                [
+                    ThoughtAtom(
+                        id="a1",
+                        source="chat.jsonl:line[1]",
+                        role="user",
+                        text="First idea",
+                        summary="First idea",
+                        kind="idea",
+                        tags=["shared", "alpha"],
+                        timestamp=None,
+                        importance=0.5,
+                        activation=0.3,
+                        metadata={},
+                    ),
+                    ThoughtAtom(
+                        id="a2",
+                        source="chat.jsonl:line[2]",
+                        role="user",
+                        text="Second idea",
+                        summary="Second idea",
+                        kind="idea",
+                        tags=["shared", "beta"],
+                        timestamp=None,
+                        importance=0.5,
+                        activation=0.3,
+                        metadata={},
+                    ),
+                ]
+            )
+
+            store.rebuild_edges()
+            edges = store.list_edges()
+
+        self.assertEqual(len(edges), 1)
+        self.assertGreater(edges[0].confidence, 0)
+        self.assertIn("shared", edges[0].evidence["shared_tags"])
+
 
 if __name__ == "__main__":
     unittest.main()

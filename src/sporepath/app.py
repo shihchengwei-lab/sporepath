@@ -10,6 +10,7 @@ from .codex_adapter import build_inspiration_prompt, run_codex_exec
 from .refresh import refresh_memory
 from .source_discovery import discover_sources
 from .store import MemoryStore
+from .vault_export import sync_obsidian_vault
 
 
 def run_app(config: AppConfig) -> None:
@@ -43,6 +44,7 @@ class SporepathApp(Frame):
         button_row.pack(fill="x", pady=(8, 12))
         Button(button_row, text="Auto-detect Sources", command=self.detect_sources).pack(side=LEFT, padx=(0, 8))
         Button(button_row, text="Refresh Now", command=self.refresh_now).pack(side=LEFT, padx=(0, 8))
+        Button(button_row, text="Sync Vault", command=self.sync_vault).pack(side=LEFT, padx=(0, 8))
         Button(button_row, text="Open Vault", command=self.open_vault).pack(side=LEFT, padx=(0, 8))
 
         Label(self, text="Question for Inspire").pack(anchor="w")
@@ -101,6 +103,9 @@ class SporepathApp(Frame):
         os.startfile(vault)
         self._write(f"Opened vault: {vault.resolve()}\n")
 
+    def sync_vault(self) -> None:
+        self._run_background(self._sync_worker)
+
     def inspire(self) -> None:
         self._run_background(self._inspire_worker)
 
@@ -119,6 +124,13 @@ class SporepathApp(Frame):
             f"atoms_imported={result.atoms_imported} atoms={result.atoms_after} "
             f"edges={result.edges_rebuilt} notes={result.notes_built} "
             f"vault_notes={result.vault_notes_exported}\n"
+        )
+
+    def _sync_worker(self) -> str:
+        result = sync_obsidian_vault(MemoryStore(self.db_var.get()), self.vault_var.get())
+        return (
+            "Vault sync complete.\n"
+            f"modified_notes={result.notes_touched} touched_atoms={result.atoms_touched}\n"
         )
 
     def _inspire_worker(self) -> str:

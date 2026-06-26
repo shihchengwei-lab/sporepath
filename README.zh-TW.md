@@ -52,6 +52,7 @@ Sporepath.bat
 它會打開一個本地小視窗，日常只需要三個動作：
 
 - **Refresh Now**：重建 notes、匯出 Obsidian vault、更新 graph。
+- **Sync Vault**：把 Obsidian 裡改過的 notes 視為使用回饋，回流加粗 source atoms。
 - **Open Vault**：打開 Markdown vault 資料夾，讓 Obsidian 使用。
 - **Inspire**：輸入卡住的問題，請 Codex 產生「怪但有橋」的下一手。
 
@@ -184,6 +185,14 @@ Sporepath Vault/
 
 每份筆記都會帶 YAML frontmatter，包括 `sporepath_id`、`type`、`state`、`activation`、`tags`、`source_atoms` 和 `source_spans`。Obsidian 負責給人閱讀、搜尋、修改；SQLite 仍然是 activation、專注/潛在分數和未來 inspire 行為的真相來源。
 
+如果你在 Obsidian 裡修改了產生出的筆記，可以把這個使用訊號同步回代謝層：
+
+```powershell
+python -m sporepath --db my_memory.sqlite sync-vault "$env:USERPROFILE\Documents\Sporepath Vault"
+```
+
+`sync-vault` 會比較 export manifest 和目前 Markdown 檔案。被修改過的 notes 會 touch 它們的 source atoms，讓 Obsidian 編輯變成路徑加粗訊號。
+
 ## 靈感橋接
 
 `inspire` 會把目前的專注路徑和潛在候選片段整理成一個短 prompt，送給 `codex exec`。這個 PoC 會移除子程序裡的 `CODEX_API_KEY` 和 `OPENAI_API_KEY`，用 stdin 傳 prompt，並以唯讀方式執行。
@@ -239,10 +248,10 @@ python -m sporepath --db my_memory.sqlite graph --out graph.html --limit 160
 
 ## 目前限制
 
-- 目前的邊只是共享標籤連結，不是真正的語意 embedding。
+- 目前的 edges 已經帶 shared-tag evidence 和 confidence metadata，但仍然不是真正的語意 embedding。
 - `qwen3:1.7b` 可以抽出有用候選，但也會製造雜訊。
 - `digest` 目前是規則式聚合，不是高品質人工編輯等級的摘要。
-- `export-vault` 目前是單向 Markdown 匯出，不是 Obsidian plugin 或同步引擎。
+- `sync-vault` 只把產生筆記的檔案修改視為回饋；目前不是完整的 Obsidian plugin 或雙向同步引擎。
 - 桌面視窗目前是本地 tkinter launcher，還不是正式 Windows 安裝包。
 - 還沒有 eval UI，現在仍然需要用 `focus` 和 `show` 手動檢查。
 - archive / deep archive 的預算機制還是產品方向，不是完整功能。

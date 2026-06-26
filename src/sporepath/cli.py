@@ -17,7 +17,7 @@ from .notes import build_notes_from_atoms
 from .refresh import refresh_memory
 from .source_discovery import discover_sources, sources_for_labels
 from .store import MemoryStore
-from .vault_export import export_obsidian_vault
+from .vault_export import export_obsidian_vault, sync_obsidian_vault
 
 
 DEFAULT_DB = Path("memory.sqlite")
@@ -57,6 +57,10 @@ def main(argv: list[str] | None = None) -> int:
 
     export_vault = sub.add_parser("export-vault", help="Export digested notes as an Obsidian Markdown vault.")
     export_vault.add_argument("path")
+
+    sync_vault = sub.add_parser("sync-vault", help="Touch notes and atoms edited in an exported Obsidian vault.")
+    sync_vault.add_argument("path")
+    sync_vault.add_argument("--touch-amount", type=float, default=0.15)
 
     refresh = sub.add_parser("refresh", help="Run ingest, digest, vault export, and graph export in one step.")
     refresh.add_argument("--input", default=None, help="Optional chat export path to ingest before refreshing.")
@@ -174,6 +178,18 @@ def main(argv: list[str] | None = None) -> int:
             return 2
         print(f"Exported {result.notes_exported} notes to {result.path.resolve()}")
         print(f"Manifest: {result.manifest_path.resolve()}")
+        return 0
+
+    if args.command == "sync-vault":
+        try:
+            result = sync_obsidian_vault(store, args.path, touch_amount=args.touch_amount)
+        except ValueError as exc:
+            print(str(exc))
+            return 2
+        print(
+            f"Synced {result.notes_touched} modified notes; "
+            f"touched {result.atoms_touched} source atoms."
+        )
         return 0
 
     if args.command == "refresh":
