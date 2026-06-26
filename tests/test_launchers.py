@@ -55,7 +55,7 @@ class LauncherTests(unittest.TestCase):
         self.assertIn("queue-worker", text)
         self.assertIn("qwen3.5:4b", text)
         self.assertIn("--off-peak", text)
-        self.assertIn("22:00-07:00", text)
+        self.assertIn("00:00-07:00", text)
         self.assertIn("--ollama-timeout-s", text)
         self.assertIn("--ollama-num-predict", text)
         self.assertIn("ollama list", text)

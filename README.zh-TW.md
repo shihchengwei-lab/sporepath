@@ -67,7 +67,7 @@ Start-ArcRift.bat
 Run-Sporepath-Queue-Worker.bat
 ```
 
-預設會用 `qwen3.5:4b`、`22:00-07:00`、每批 `5` 筆。啟動前會先檢查 Ollama 和模型是否存在，避免模型沒裝時把 queue 項目標成錯誤。
+預設會用 `qwen3.5:4b`、`00:00-07:00`、每批 `5` 筆。啟動前會先檢查 Ollama 和模型是否存在，避免模型沒裝時把 queue 項目標成錯誤。
 
 如果不想手動進 Chrome extension manager，可以試試這兩個 best-effort launcher：
 
@@ -230,7 +230,7 @@ python -m sporepath --db real_memory.sqlite digest-queue `
 
 ```powershell
 python -m sporepath --db real_memory.sqlite queue-worker `
-  --off-peak 22:00-07:00 `
+  --off-peak 00:00-07:00 `
   --batch-size 5 `
   --interval-s 300 `
   --extractor ollama `

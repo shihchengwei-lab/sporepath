@@ -101,7 +101,7 @@ If you only want the off-peak queue worker:
 Run-Sporepath-Queue-Worker.bat
 ```
 
-It defaults to `qwen3.5:4b`, `22:00-07:00`, batch size `5`, and checks that
+It defaults to `qwen3.5:4b`, `00:00-07:00`, batch size `5`, and checks that
 Ollama and the model exist before starting.
 
 If Chrome's extension manager is inconvenient, there are best-effort launchers:
@@ -223,7 +223,7 @@ To leave a worker running and only process the queue during off-peak hours:
 
 ```powershell
 python -m sporepath --db real_memory.sqlite queue-worker `
-  --off-peak 22:00-07:00 `
+  --off-peak 00:00-07:00 `
   --batch-size 5 `
   --interval-s 300 `
   --extractor ollama `

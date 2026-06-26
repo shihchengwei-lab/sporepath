@@ -148,7 +148,7 @@ def main(argv: list[str] | None = None) -> int:
     digest_queue.add_argument("--skip-rebuild-edges", action="store_true")
 
     queue_worker = sub.add_parser("queue-worker", help="Continuously process the digestion queue during an off-peak window.")
-    queue_worker.add_argument("--off-peak", default="22:00-07:00", help="Allowed processing window, e.g. 22:00-07:00.")
+    queue_worker.add_argument("--off-peak", default="00:00-07:00", help="Allowed processing window, e.g. 00:00-07:00.")
     queue_worker.add_argument("--batch-size", type=int, default=5)
     queue_worker.add_argument("--interval-s", type=float, default=300.0)
     queue_worker.add_argument("--once", action="store_true", help="Run one scheduler tick and exit.")
