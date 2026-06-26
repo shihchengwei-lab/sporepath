@@ -7,6 +7,7 @@ set SPOREPATH_ARCRIFT_ARGS=
 if exist "%ARCRIFT_DB%" set SPOREPATH_ARCRIFT_ARGS=--arcrift-db "%ARCRIFT_DB%"
 set "SPOREPATH_DB=real_memory.sqlite"
 set "SPOREPATH_VAULT=%USERPROFILE%\Documents\Sporepath Vault"
+set "SPOREPATH_NOTES_INBOX=%USERPROFILE%\Documents\Sporepath Inbox"
 set "SPOREPATH_GRAPH=real_graph.html"
 set "SPOREPATH_QUEUE_MODEL=qwen3:1.7b"
 set "SPOREPATH_QUEUE_OFF_PEAK=00:00-07:00"
@@ -30,9 +31,12 @@ if errorlevel 1 (
   exit /b 2
 )
 
+if not exist "%SPOREPATH_NOTES_INBOX%" mkdir "%SPOREPATH_NOTES_INBOX%"
+
 python -m sporepath --db "%SPOREPATH_DB%" queue-worker ^
   --source all ^
   %SPOREPATH_ARCRIFT_ARGS% ^
+  --notes-inbox "%SPOREPATH_NOTES_INBOX%" ^
   --min-chars "%SPOREPATH_QUEUE_MIN_CHARS%" ^
   --dedupe-threshold "%SPOREPATH_QUEUE_DEDUPE_THRESHOLD%" ^
   --off-peak "%SPOREPATH_QUEUE_OFF_PEAK%" ^

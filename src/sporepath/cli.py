@@ -18,6 +18,7 @@ from .codex_adapter import build_inspiration_prompt, codex_command, parse_inspir
 from .digest_queue import (
     collect_fragments_from_arcrift_db,
     collect_fragments_from_files,
+    collect_fragments_from_notes_inbox,
     is_off_peak_window,
     process_digest_queue,
 )
@@ -88,6 +89,17 @@ def _enqueue_queue_inputs(store: MemoryStore, args) -> int:
                 min_chars=args.min_chars,
                 max_turns=args.max_turns,
                 project=getattr(args, "arcrift_project", None),
+                dedupe=args.dedupe,
+                dedupe_threshold=args.dedupe_threshold,
+            )
+        )
+    notes_inbox = getattr(args, "notes_inbox", None) or []
+    if notes_inbox:
+        fragments.extend(
+            collect_fragments_from_notes_inbox(
+                notes_inbox,
+                min_chars=args.min_chars,
+                max_turns=args.max_turns,
                 dedupe=args.dedupe,
                 dedupe_threshold=args.dedupe_threshold,
             )
@@ -223,6 +235,7 @@ def main(argv: list[str] | None = None) -> int:
     queue_build.add_argument("--source", action="append", default=[], help="Auto-detected source family or label.")
     queue_build.add_argument("--arcrift-db", default=None, help="ArcRift SQLite DB to queue as a web-chat source.")
     queue_build.add_argument("--arcrift-project", default=None, help="Optional ArcRift project name or session id to queue.")
+    queue_build.add_argument("--notes-inbox", action="append", default=[], help="Markdown/txt notes inbox file or directory to queue.")
     queue_build.add_argument("--home", default=None, help="Override home directory for source detection.")
     queue_build.add_argument("--min-chars", type=int, default=12)
     queue_build.add_argument("--max-turns", type=int, default=None)
@@ -249,6 +262,7 @@ def main(argv: list[str] | None = None) -> int:
     queue_worker.add_argument("--source", action="append", default=[], help="Auto-detected source family or label to collect into the queue each tick.")
     queue_worker.add_argument("--arcrift-db", default=None, help="ArcRift SQLite DB to collect into the queue each tick.")
     queue_worker.add_argument("--arcrift-project", default=None, help="Optional ArcRift project name or session id to collect.")
+    queue_worker.add_argument("--notes-inbox", action="append", default=[], help="Markdown/txt notes inbox file or directory to collect.")
     queue_worker.add_argument("--home", default=None, help="Override home directory for source detection.")
     queue_worker.add_argument("--off-peak", default="00:00-07:00", help="Allowed processing window, e.g. 00:00-07:00.")
     queue_worker.add_argument("--batch-size", type=int, default=5)
@@ -612,8 +626,12 @@ def main(argv: list[str] | None = None) -> int:
             time.sleep(max(1.0, args.interval_s))
 
     if args.command == "queue-build":
-        if not args.input and not args.source and not args.arcrift_db:
-            print("No queue input. Use --input <path>, --source codex/claude/all, or --arcrift-db <path>.", file=sys.stderr)
+        if not args.input and not args.source and not args.arcrift_db and not args.notes_inbox:
+            print(
+                "No queue input. Use --input <path>, --source codex/claude/all, "
+                "--arcrift-db <path>, or --notes-inbox <path>.",
+                file=sys.stderr,
+            )
             return 2
         inserted = _enqueue_queue_inputs(store, args)
         stats = store.queue_stats()
@@ -822,6 +840,7 @@ def main(argv: list[str] | None = None) -> int:
             print(f"arcrift={config.arcrift_path or ''}")
             print(f"vault={config.vault_path}")
             print(f"graph={config.graph_path}")
+            print(f"notes_inbox={config.notes_inbox_path or ''}")
             return 0
         config = load_app_config(config, base_dir=Path.cwd())
         from .app import run_app

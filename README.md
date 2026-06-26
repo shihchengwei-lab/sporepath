@@ -27,6 +27,8 @@ thicken, fade, or sink into archive.
 - Imports ChatGPT-style `conversations.json`, generic JSONL chat logs,
   allowlisted local Codex/Claude conversation stores, and ArcRift SQLite
   `full_chats`.
+- Queues manually written Markdown/txt notes from a notes inbox, so old saved
+  ideas can enter the same digestion path as chats.
 - Extracts `thought atoms` with either:
   - a deterministic rules baseline, or
   - a local Ollama model such as `qwen3:1.7b`.
@@ -63,15 +65,22 @@ Sporepath.bat
 ```
 
 This starts the ArcRift backend if needed, starts the local source watcher and
-off-peak digestion queue worker minimized, and opens the small local Sporepath
-window.
+off-peak digestion queue worker in the background, and opens the small local
+Sporepath window.
+
+Only the Sporepath window is meant to stay visible. ArcRift, source watching,
+and queue digestion run hidden; the main window shows small status indicators
+for ArcRift, Sources, and Queue.
 
 - Local Codex/Claude/jsonl sources are watched directly. When those files
   change, Sporepath refreshes the SQLite memory, digested notes, Obsidian vault,
   and graph.
-- The background digestion queue worker is started minimized. It collects new
-  local-source and ArcRift fragments, then only digests them during the
-  configured off-peak window.
+- The background digestion queue worker is started hidden. It collects new
+  local-source, ArcRift, and notes-inbox fragments, then only digests them
+  during the configured off-peak window.
+- Put old `.md`, `.markdown`, or `.txt` notes in
+  `%USERPROFILE%\Documents\Sporepath Inbox`; they will be queued for scout
+  digestion. Sporepath does not scan arbitrary ArcRift folders for notes.
 - Web chats are intentionally not scraped in the background. After a ChatGPT or
   Claude web conversation, press ArcRift's popup **Save Chat** button. Once
   ArcRift writes the chat into `ArcRift.db`, Sporepath queues it as another
@@ -111,9 +120,10 @@ Run-Sporepath-Queue-Worker.bat
 
 It defaults to `qwen3:1.7b`, `00:00-07:00`, batch size `5`, auto-feeds
 allowlisted local sources with `--source all`, includes the neighboring
-`..\ArcRift\backend\ArcRift.db` when present, refreshes the Obsidian vault and
-HTML graph after new atoms are created, and checks that Ollama and the model
-exist before starting.
+`..\ArcRift\backend\ArcRift.db` when present, creates/uses
+`%USERPROFILE%\Documents\Sporepath Inbox` for Markdown/txt notes, refreshes the
+Obsidian vault and HTML graph after new atoms are created, and checks that
+Ollama and the model exist before starting.
 
 To start that worker automatically when Windows logs in, run:
 
@@ -219,6 +229,9 @@ fragments first, then digest them later during idle/off-peak time:
 
 ```powershell
 python -m sporepath --db real_memory.sqlite queue-build --source all --min-chars 80
+python -m sporepath --db real_memory.sqlite queue-build `
+  --notes-inbox "$env:USERPROFILE\Documents\Sporepath Inbox" `
+  --min-chars 80
 python -m sporepath --db real_memory.sqlite queue-stats
 ```
 
@@ -258,6 +271,7 @@ To leave a worker running and only process the queue during off-peak hours:
 python -m sporepath --db real_memory.sqlite queue-worker `
   --source all `
   --arcrift-db "$env:USERPROFILE\Desktop\GH_repos\ArcRift\backend\ArcRift.db" `
+  --notes-inbox "$env:USERPROFILE\Documents\Sporepath Inbox" `
   --off-peak 00:00-07:00 `
   --batch-size 5 `
   --interval-s 300 `

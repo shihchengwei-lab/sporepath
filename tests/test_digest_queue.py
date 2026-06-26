@@ -10,6 +10,7 @@ from sporepath.digest_queue import (
     collect_fragments_from_arcrift_db,
     collect_fragments_from_file,
     collect_fragments_from_files,
+    collect_fragments_from_notes_inbox,
     is_off_peak_window,
     process_digest_queue,
 )
@@ -188,6 +189,57 @@ class DigestQueueTests(unittest.TestCase):
         self.assertEqual(first_inserted, 2)
         self.assertEqual(second_inserted, 0)
         self.assertEqual(stats["pending"], 2)
+
+    def test_collect_fragments_from_notes_inbox_splits_markdown_and_text(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            inbox = Path(tmp) / "Inbox"
+            inbox.mkdir()
+            (inbox / "idea.md").write_text(
+                "---\ntitle: private metadata\n---\n\n"
+                "# Product Idea\n\n"
+                "Sporepath should digest old handwritten notes without treating generated vault notes as source truth.\n\n"
+                "- Keep the scout small.\n"
+                "- Let usage signals decide what survives.\n\n"
+                "A short line.\n",
+                encoding="utf-8",
+            )
+            (inbox / "saved.txt").write_text(
+                "Saved fragment from an old chat export should become a queue candidate.\n\n"
+                "tiny\n",
+                encoding="utf-8",
+            )
+            ignored = inbox / ".sporepath"
+            ignored.mkdir()
+            (ignored / "manifest.md").write_text("Generated metadata should be ignored.", encoding="utf-8")
+
+            fragments = collect_fragments_from_notes_inbox([inbox], min_chars=30)
+
+        self.assertEqual(len(fragments), 3)
+        self.assertEqual({fragment["role"] for fragment in fragments}, {"note"})
+        self.assertTrue(all(str(fragment["source"]).startswith("note-inbox:") for fragment in fragments))
+        self.assertTrue(any("Product Idea" in str(fragment["text"]) for fragment in fragments))
+        self.assertFalse(any("private metadata" in str(fragment["text"]) for fragment in fragments))
+        self.assertFalse(any("Generated metadata" in str(fragment["text"]) for fragment in fragments))
+
+    def test_notes_inbox_queue_fragments_checkpoint_after_first_enqueue(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            inbox = Path(tmp) / "Inbox"
+            memory_db = Path(tmp) / "memory.sqlite"
+            inbox.mkdir()
+            (inbox / "note.md").write_text(
+                "# Old Note\n\nThis old note should be digested once and not repeatedly requeued.",
+                encoding="utf-8",
+            )
+            store = MemoryStore(memory_db)
+
+            fragments = collect_fragments_from_notes_inbox([inbox], min_chars=20)
+            first_inserted = store.enqueue_fragments(fragments)
+            second_inserted = store.enqueue_fragments(fragments)
+            stats = store.queue_stats()
+
+        self.assertEqual(first_inserted, 1)
+        self.assertEqual(second_inserted, 0)
+        self.assertEqual(stats["pending"], 1)
 
 def _create_arcrift_db(path: Path) -> None:
     with closing(sqlite3.connect(path)) as con:

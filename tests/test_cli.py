@@ -410,6 +410,74 @@ class CliTests(unittest.TestCase):
         self.assertEqual(stats["done"], 1)
         self.assertEqual(stats["pending"], 1)
 
+    def test_queue_build_can_feed_notes_inbox(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            db = Path(tmp) / "memory.sqlite"
+            inbox = Path(tmp) / "Inbox"
+            inbox.mkdir()
+            (inbox / "old-note.md").write_text(
+                "# Old Product Note\n\nThis manually written note should enter the digestion queue.",
+                encoding="utf-8",
+            )
+
+            out = io.StringIO()
+            with redirect_stdout(out):
+                code = main(
+                    [
+                        "--db",
+                        str(db),
+                        "queue-build",
+                        "--notes-inbox",
+                        str(inbox),
+                        "--min-chars",
+                        "20",
+                    ]
+                )
+            store = MemoryStore(db)
+            stats = store.queue_stats()
+
+        self.assertEqual(code, 0)
+        self.assertIn("Enqueued 1 fragments", out.getvalue())
+        self.assertEqual(stats["pending"], 1)
+
+    def test_queue_worker_can_auto_feed_notes_inbox(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            db = Path(tmp) / "memory.sqlite"
+            inbox = Path(tmp) / "Inbox"
+            inbox.mkdir()
+            (inbox / "old-note.md").write_text(
+                "# Old Product Note\n\nThis manually written note should become an atom later.",
+                encoding="utf-8",
+            )
+
+            out = io.StringIO()
+            with redirect_stdout(out):
+                code = main(
+                    [
+                        "--db",
+                        str(db),
+                        "queue-worker",
+                        "--once",
+                        "--run-now",
+                        "--notes-inbox",
+                        str(inbox),
+                        "--min-chars",
+                        "20",
+                        "--extractor",
+                        "rules",
+                        "--batch-size",
+                        "1",
+                    ]
+                )
+            store = MemoryStore(db)
+            stats = store.queue_stats()
+            atoms = store.list_atoms()
+
+        self.assertEqual(code, 0)
+        self.assertIn("enqueued=1", out.getvalue())
+        self.assertEqual(len(atoms), 1)
+        self.assertEqual(stats["done"], 1)
+
     def test_queue_errors_and_retry_commands(self):
         with tempfile.TemporaryDirectory() as tmp:
             db = Path(tmp) / "memory.sqlite"

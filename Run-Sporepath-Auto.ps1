@@ -12,6 +12,7 @@ $env:ARCRIFT_DB = Join-Path $PSScriptRoot "..\ArcRift\backend\ArcRift.db"
 $env:SPOREPATH_DB = "real_memory.sqlite"
 $env:SPOREPATH_VAULT = Join-Path $env:USERPROFILE "Documents\Sporepath Vault"
 $env:SPOREPATH_GRAPH = "real_graph.html"
+$env:SPOREPATH_ARCRIFT_URL = "http://127.0.0.1:3001"
 
 $managedProcesses = New-Object System.Collections.Generic.List[System.Diagnostics.Process]
 
@@ -26,10 +27,10 @@ function Start-ManagedBatch {
     $process = Start-Process `
         -FilePath $env:ComSpec `
         -ArgumentList @("/c", "`"$Path`"") `
-        -WindowStyle Minimized `
+        -WindowStyle Hidden `
         -PassThru
     $managedProcesses.Add($process)
-    Write-Host "Started ${Title}: pid=$($process.Id)"
+    return $process
 }
 
 function Stop-ProcessTree {
@@ -42,8 +43,10 @@ function Stop-ProcessTree {
 }
 
 try {
-    Start-ManagedBatch -Title "Sporepath Sources Watcher" -Path "$PSScriptRoot\Run-Sporepath-Sources-Watcher.bat"
-    Start-ManagedBatch -Title "Sporepath Queue Worker" -Path "$PSScriptRoot\Run-Sporepath-Queue-Worker.bat"
+    $sourcesWatcher = Start-ManagedBatch -Title "Sporepath Sources Watcher" -Path "$PSScriptRoot\Run-Sporepath-Sources-Watcher.bat"
+    $queueWorker = Start-ManagedBatch -Title "Sporepath Queue Worker" -Path "$PSScriptRoot\Run-Sporepath-Queue-Worker.bat"
+    $env:SPOREPATH_SOURCES_WATCHER_PID = [string]$sourcesWatcher.Id
+    $env:SPOREPATH_QUEUE_WORKER_PID = [string]$queueWorker.Id
 
     & python -m sporepath --db $env:SPOREPATH_DB app
     $exitCode = $LASTEXITCODE

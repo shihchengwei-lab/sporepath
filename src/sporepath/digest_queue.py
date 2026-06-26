@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 import hashlib
+import re
 from dataclasses import dataclass, replace
-from datetime import time
+from datetime import datetime, time, timezone
 from pathlib import Path
 from typing import Iterable
 
@@ -17,6 +18,9 @@ from .ingest import (
     _read_turns,
 )
 from .store import MemoryStore
+
+
+NOTES_INBOX_SUFFIXES = {".md", ".markdown", ".txt"}
 
 
 @dataclass(frozen=True)
@@ -70,6 +74,50 @@ def collect_fragments_from_file(
                 "timestamp": turn.get("timestamp"),
             }
         )
+    return fragments
+
+
+def collect_fragments_from_notes_inbox(
+    paths: Iterable[str | Path],
+    *,
+    min_chars: int = 12,
+    max_turns: int | None = None,
+    dedupe: bool = True,
+    conservative: bool = True,
+    dedupe_threshold: float = DEFAULT_DEDUPE_THRESHOLD,
+    fragment_filter: FragmentFilter | None = None,
+) -> list[dict[str, object]]:
+    active_filter = fragment_filter or FragmentFilter(
+        dedupe=dedupe,
+        conservative=conservative,
+        threshold=dedupe_threshold,
+    )
+    fragments: list[dict[str, object]] = []
+    chunks_read = 0
+    for note_path, root in _expand_notes_inbox_files(paths):
+        timestamp = _file_timestamp(note_path)
+        relative = _relative_note_path(note_path, root)
+        for chunk_index, chunk in enumerate(_read_note_chunks(note_path)):
+            if max_turns is not None and chunks_read >= max_turns:
+                return fragments
+            chunks_read += 1
+            text = _clean_text(chunk)
+            if _is_tool_noise(text) or len(text) < min_chars:
+                continue
+            if active_filter is not None and not active_filter.keep(text).keep:
+                continue
+            source = f"note-inbox:{relative}:chunk[{chunk_index}]"
+            fragment_id = hashlib.sha1(f"{source}\n{text}".encode("utf-8")).hexdigest()[:16]
+            fragments.append(
+                {
+                    "id": fragment_id,
+                    "source_file": str(note_path),
+                    "source": source,
+                    "role": "note",
+                    "text": text,
+                    "timestamp": timestamp,
+                }
+            )
     return fragments
 
 
@@ -209,6 +257,99 @@ def _atom_from_fragment(fragment: dict[str, object], *, extractor: Extractor | N
 
 class _SkipFragment(Exception):
     pass
+
+
+def _expand_notes_inbox_files(paths: Iterable[str | Path]) -> list[tuple[Path, Path]]:
+    files: list[tuple[Path, Path]] = []
+    for item in paths:
+        path = Path(item)
+        if path.is_file() and _is_allowed_note_file(path):
+            files.append((path, path.parent))
+            continue
+        if not path.is_dir():
+            continue
+        files.extend(
+            (file, path)
+            for file in path.rglob("*")
+            if file.is_file() and _is_allowed_note_file(file)
+        )
+    return sorted(dict.fromkeys(files), key=lambda pair: str(pair[0]).casefold())
+
+
+def _is_allowed_note_file(path: Path) -> bool:
+    if path.suffix.casefold() not in NOTES_INBOX_SUFFIXES:
+        return False
+    folded_parts = [part.casefold() for part in path.parts]
+    if any(part.startswith(".") for part in folded_parts):
+        return False
+    if ".sporepath" in folded_parts:
+        return False
+    return True
+
+
+def _read_note_chunks(path: Path) -> list[str]:
+    text = path.read_text(encoding="utf-8", errors="replace")
+    if _looks_like_generated_sporepath_note(text):
+        return []
+    return _split_note_text(_strip_yaml_frontmatter(text))
+
+
+def _looks_like_generated_sporepath_note(text: str) -> bool:
+    head = "\n".join(text.splitlines()[:30]).casefold()
+    return "sporepath_id:" in head and "source_atoms:" in head
+
+
+def _strip_yaml_frontmatter(text: str) -> str:
+    lines = text.splitlines()
+    if not lines or lines[0].strip() != "---":
+        return text
+    for index, line in enumerate(lines[1:], start=1):
+        if line.strip() == "---":
+            return "\n".join(lines[index + 1 :])
+    return text
+
+
+def _split_note_text(text: str) -> list[str]:
+    chunks: list[str] = []
+    heading = ""
+    block: list[str] = []
+
+    def flush() -> None:
+        nonlocal block
+        body = "\n".join(block).strip()
+        block = []
+        if not body:
+            return
+        chunks.append(f"{heading}\n\n{body}".strip() if heading else body)
+
+    for raw_line in text.splitlines():
+        line = raw_line.rstrip()
+        stripped = line.strip()
+        heading_match = re.match(r"^(#{1,6})\s+(.+)$", stripped)
+        if heading_match:
+            flush()
+            heading = heading_match.group(2).strip()
+            continue
+        if not stripped:
+            flush()
+            continue
+        block.append(line)
+    flush()
+    return chunks
+
+
+def _relative_note_path(path: Path, root: Path) -> str:
+    try:
+        return path.relative_to(root).as_posix()
+    except ValueError:
+        return path.name
+
+
+def _file_timestamp(path: Path) -> str | None:
+    try:
+        return datetime.fromtimestamp(path.stat().st_mtime, timezone.utc).isoformat()
+    except OSError:
+        return None
 
 
 def _parse_window(window: str) -> tuple[str, str]:

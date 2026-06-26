@@ -18,11 +18,12 @@ class AppConfig:
     arcrift_path: Path | None
     vault_path: Path
     graph_path: Path
+    notes_inbox_path: Path | None = None
 
 
 CONFIG_FILENAME = "config.json"
 ENV_PATH_KEYS = ("USERPROFILE", "APPDATA", "LOCALAPPDATA")
-CONFIG_FIELDS = ("db_path", "input_path", "arcrift_path", "vault_path", "graph_path")
+CONFIG_FIELDS = ("db_path", "input_path", "arcrift_path", "vault_path", "graph_path", "notes_inbox_path")
 
 
 def default_app_config(db_path: str | Path) -> AppConfig:
@@ -33,6 +34,7 @@ def default_app_config(db_path: str | Path) -> AppConfig:
         arcrift_path=default_arcrift_db_path(),
         vault_path=home / "Documents" / "Sporepath Vault",
         graph_path=Path("sporepath_graph.html"),
+        notes_inbox_path=home / "Documents" / "Sporepath Inbox",
     )
 
 

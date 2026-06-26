@@ -1,4 +1,4 @@
 @echo off
 cd /d "%~dp0"
 
-powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0Run-Sporepath-Auto.ps1"
+start "Sporepath" powershell -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File "%~dp0Run-Sporepath-Auto.ps1"

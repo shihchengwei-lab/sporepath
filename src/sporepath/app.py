@@ -1,14 +1,23 @@
 from __future__ import annotations
 
 import os
+import subprocess
 import threading
+import urllib.error
+import urllib.request
+from dataclasses import dataclass
 from pathlib import Path
 from tkinter import BOTH, END, LEFT, RIGHT, Button, Entry, Frame, Label, Radiobutton, StringVar, Text, Tk, Toplevel, filedialog
 
 from .app_config import AppConfig, save_app_config
 from .automation import sync_arcrift_memory
 from .codex_adapter import build_inspiration_prompt, parse_inspiration_suggestions, run_codex_exec
-from .digest_queue import collect_fragments_from_arcrift_db, collect_fragments_from_files, process_digest_queue
+from .digest_queue import (
+    collect_fragments_from_arcrift_db,
+    collect_fragments_from_files,
+    collect_fragments_from_notes_inbox,
+    process_digest_queue,
+)
 from .graph_export import export_graph_html
 from .notes import build_notes_from_atoms
 from .refresh import refresh_memory
@@ -27,6 +36,117 @@ DEBUG_ACTION_LABELS = (
     "Queue Status",
     "Run Queue Batch",
 )
+
+
+SERVICE_STATUS_LABELS = ("ArcRift", "Sources", "Queue")
+STATUS_LIGHT_COLORS = {
+    "ok": "#1a7f37",
+    "down": "#cf222e",
+    "off": "#6e7781",
+    "checking": "#9a6700",
+}
+
+
+@dataclass(frozen=True)
+class ServiceStatus:
+    key: str
+    label: str
+    state: str
+    detail: str = ""
+
+
+def status_light_color(state: str) -> str:
+    return STATUS_LIGHT_COLORS.get(state, STATUS_LIGHT_COLORS["checking"])
+
+
+def service_status_text(status: ServiceStatus) -> str:
+    state_text = {
+        "ok": "on",
+        "down": "down",
+        "off": "off",
+        "checking": "checking",
+    }.get(status.state, status.state)
+    return f"{status.label}: {state_text}"
+
+
+def build_service_statuses(
+    *,
+    env: dict[str, str] | None = None,
+    pid_checker=None,
+    arcrift_checker=None,
+) -> dict[str, ServiceStatus]:
+    env_values = os.environ if env is None else env
+    check_pid = pid_checker or pid_is_running
+    check_arcrift = arcrift_checker or arcrift_is_reachable
+    return {
+        "arcrift": ServiceStatus(
+            key="arcrift",
+            label="ArcRift",
+            state="ok" if check_arcrift() else "down",
+        ),
+        "sources": _status_from_pid(
+            "sources",
+            "Sources",
+            env_values.get("SPOREPATH_SOURCES_WATCHER_PID"),
+            check_pid,
+        ),
+        "queue": _status_from_pid(
+            "queue",
+            "Queue",
+            env_values.get("SPOREPATH_QUEUE_WORKER_PID"),
+            check_pid,
+        ),
+    }
+
+
+def pid_is_running(pid: int) -> bool:
+    if pid <= 0:
+        return False
+    if os.name == "nt":
+        try:
+            result = subprocess.run(
+                ["tasklist", "/FI", f"PID eq {pid}", "/FO", "CSV", "/NH"],
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                capture_output=True,
+                check=False,
+                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+            )
+        except OSError:
+            return False
+        return f'"{pid}"' in result.stdout
+    try:
+        os.kill(pid, 0)
+    except OSError:
+        return False
+    return True
+
+
+def arcrift_is_reachable(url: str | None = None) -> bool:
+    target = url or os.environ.get("SPOREPATH_ARCRIFT_URL", "http://127.0.0.1:3001")
+    try:
+        with urllib.request.urlopen(target, timeout=0.4):
+            return True
+    except urllib.error.HTTPError:
+        return True
+    except (urllib.error.URLError, TimeoutError, OSError):
+        return False
+
+
+def _status_from_pid(key: str, label: str, raw_pid: str | None, pid_checker) -> ServiceStatus:
+    if not raw_pid:
+        return ServiceStatus(key=key, label=label, state="off")
+    try:
+        pid = int(raw_pid)
+    except ValueError:
+        return ServiceStatus(key=key, label=label, state="down", detail=raw_pid)
+    return ServiceStatus(
+        key=key,
+        label=label,
+        state="ok" if pid_checker(pid) else "down",
+        detail=f"pid={pid}",
+    )
 
 
 def should_show_feedback_controls(run_id: str | None, suggestion_count: int) -> bool:
@@ -69,6 +189,7 @@ class SporepathApp(Frame):
         self.arcrift_var = StringVar(value=str(config.arcrift_path or ""))
         self.vault_var = StringVar(value=str(config.vault_path))
         self.graph_var = StringVar(value=str(config.graph_path))
+        self.notes_inbox_var = StringVar(value=str(config.notes_inbox_path or ""))
         self.detected_source_paths: list[Path] = []
         self.last_inspire_run_id: str | None = None
         self.last_inspire_suggestion_count = 0
@@ -77,6 +198,8 @@ class SporepathApp(Frame):
         self.debug_window: Toplevel | None = None
         self.feedback_row: Frame
         self.inspire_row: Frame
+        self.status_vars: dict[str, StringVar] = {}
+        self.status_labels: dict[str, Label] = {}
         self.output_label: Label
         self.question: Text
         self.output: Text
@@ -87,6 +210,8 @@ class SporepathApp(Frame):
         primary_row.pack(fill="x", pady=(0, 12))
         Button(primary_row, text=PRIMARY_ACTION_LABELS[0], command=self.sync_vault).pack(side=LEFT, padx=(0, 8))
         Button(primary_row, text=PRIMARY_ACTION_LABELS[1], command=self.open_debug_panel).pack(side=LEFT)
+
+        self._build_status_row()
 
         Label(self, text="Question for Inspire").pack(anchor="w")
         self.question = Text(self, height=5, wrap="word")
@@ -104,6 +229,26 @@ class SporepathApp(Frame):
         self.output = Text(self, height=20, wrap="word")
         self.output.pack(fill=BOTH, expand=True, pady=(4, 0))
         self._write("Ready.\n")
+        self.after(100, self.refresh_service_statuses)
+
+    def _build_status_row(self) -> None:
+        row = Frame(self)
+        row.pack(fill="x", pady=(0, 12))
+        for key, label in (("arcrift", "ArcRift"), ("sources", "Sources"), ("queue", "Queue")):
+            variable = StringVar(value=f"{label}: checking")
+            self.status_vars[key] = variable
+            status_label = Label(row, textvariable=variable, fg=status_light_color("checking"))
+            self.status_labels[key] = status_label
+            status_label.pack(side=LEFT, padx=(0, 14))
+
+    def refresh_service_statuses(self) -> None:
+        statuses = build_service_statuses()
+        for key, status in statuses.items():
+            if key in self.status_vars:
+                self.status_vars[key].set(service_status_text(status))
+            if key in self.status_labels:
+                self.status_labels[key].configure(fg=status_light_color(status.state))
+        self.after(5000, self.refresh_service_statuses)
 
     def _path_row(
         self,
@@ -139,6 +284,7 @@ class SporepathApp(Frame):
         self._path_row(panel, "Chat Export", self.input_var, browse_file=True)
         self._path_row(panel, "ArcRift DB", self.arcrift_var, browse_file=True)
         self._path_row(panel, "Obsidian Vault", self.vault_var, browse_dir=True)
+        self._path_row(panel, "Notes Inbox", self.notes_inbox_var, browse_dir=True)
         self._path_row(panel, "Graph HTML", self.graph_var, browse_file=True)
 
         debug_row = Frame(panel)
@@ -197,12 +343,14 @@ class SporepathApp(Frame):
     def _current_config(self) -> AppConfig:
         input_text = self.input_var.get().strip()
         arcrift_text = self.arcrift_var.get().strip()
+        notes_inbox_text = self.notes_inbox_var.get().strip()
         return AppConfig(
             db_path=Path(self.db_var.get()),
             input_path=Path(input_text) if input_text else None,
             arcrift_path=Path(arcrift_text) if arcrift_text else None,
             vault_path=Path(self.vault_var.get()),
             graph_path=Path(self.graph_var.get()),
+            notes_inbox_path=Path(notes_inbox_text) if notes_inbox_text else None,
         )
 
     def save_settings(self) -> None:
@@ -307,6 +455,10 @@ class SporepathApp(Frame):
         if arcrift_text:
             arcrift_fragments = collect_fragments_from_arcrift_db(arcrift_text, min_chars=80)
             enqueued += store.enqueue_fragments(arcrift_fragments)
+        notes_inbox_text = self.notes_inbox_var.get().strip()
+        if notes_inbox_text:
+            note_fragments = collect_fragments_from_notes_inbox([notes_inbox_text], min_chars=80)
+            enqueued += store.enqueue_fragments(note_fragments)
 
         result = process_digest_queue(store, extractor=None, limit=5)
         edges = 0

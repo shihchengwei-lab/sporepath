@@ -45,6 +45,7 @@ class AppConfigPersistenceTests(unittest.TestCase):
                 arcrift_path=Path(r"C:\Users\alice\Desktop\GH_repos\ArcRift\backend\ArcRift.db"),
                 vault_path=Path(r"C:\Users\alice\Documents\Sporepath Vault"),
                 graph_path=base / "sporepath_graph.html",
+                notes_inbox_path=Path(r"C:\Users\alice\Documents\Sporepath Inbox"),
             )
 
             save_app_config(
@@ -61,6 +62,7 @@ class AppConfigPersistenceTests(unittest.TestCase):
                     arcrift_path=None,
                     vault_path=Path("fallback-vault"),
                     graph_path=Path("fallback.html"),
+                    notes_inbox_path=Path("fallback-inbox"),
                 ),
                 config_path=config_path,
                 base_dir=Path(r"D:\other-repo"),
@@ -69,8 +71,10 @@ class AppConfigPersistenceTests(unittest.TestCase):
 
         self.assertEqual(raw["db_path"], "real_memory.sqlite")
         self.assertEqual(raw["vault_path"], r"%USERPROFILE%\Documents\Sporepath Vault")
+        self.assertEqual(raw["notes_inbox_path"], r"%USERPROFILE%\Documents\Sporepath Inbox")
         self.assertEqual(loaded.db_path, Path(r"D:\other-repo\real_memory.sqlite"))
         self.assertEqual(loaded.vault_path, Path(r"D:\Users\bob\Documents\Sporepath Vault"))
+        self.assertEqual(loaded.notes_inbox_path, Path(r"D:\Users\bob\Documents\Sporepath Inbox"))
 
 
 if __name__ == "__main__":
