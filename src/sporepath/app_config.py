@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import json
+import ntpath
 import os
+import re
 from dataclasses import dataclass
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 from string import Template
 
 from .automation import default_arcrift_db_path
@@ -48,7 +50,11 @@ def make_portable_path(
 ) -> str:
     if value is None or str(value).strip() == "":
         return ""
-    raw = Path(value)
+    text = str(value)
+    if _is_windows_path(text):
+        return _make_portable_windows_path(text, base_dir=base_dir, env=env)
+
+    raw = Path(text)
     if not raw.is_absolute():
         return str(raw)
 
@@ -80,9 +86,13 @@ def expand_portable_path(
         return None
     env_values = env or os.environ
     expanded = _expand_windows_vars(str(value), env_values)
+    if _is_windows_path(expanded):
+        return Path(ntpath.normpath(expanded))
     path = Path(os.path.expanduser(expanded))
     if path.is_absolute():
         return path
+    if base_dir is not None and _is_windows_path(str(base_dir)):
+        return Path(ntpath.normpath(ntpath.join(str(base_dir), str(PureWindowsPath(path)))))
     return (Path(base_dir) / path) if base_dir is not None else path
 
 
@@ -127,6 +137,45 @@ def _relative_to(path: Path, root: Path) -> Path | None:
         return path.relative_to(root)
     except ValueError:
         return None
+
+
+def _make_portable_windows_path(
+    value: str,
+    *,
+    base_dir: str | Path | None = None,
+    env: dict[str, str] | None = None,
+) -> str:
+    env_values = env or os.environ
+    for key in ENV_PATH_KEYS:
+        root = env_values.get(key)
+        if not root:
+            continue
+        relative = _windows_relative_to(value, root)
+        if relative is not None:
+            return f"%{key}%" if relative == "." else ntpath.join(f"%{key}%", relative)
+
+    if base_dir is not None:
+        relative = _windows_relative_to(value, str(base_dir))
+        if relative is not None:
+            return relative
+
+    return ntpath.normpath(value)
+
+
+def _windows_relative_to(path: str, root: str) -> str | None:
+    normalized_path = ntpath.normcase(ntpath.normpath(path))
+    normalized_root = ntpath.normcase(ntpath.normpath(root))
+    try:
+        common = ntpath.commonpath([normalized_path, normalized_root])
+    except ValueError:
+        return None
+    if common != normalized_root:
+        return None
+    return ntpath.relpath(ntpath.normpath(path), ntpath.normpath(root))
+
+
+def _is_windows_path(value: str) -> bool:
+    return bool(re.match(r"^[A-Za-z]:[\\/]", value)) or value.startswith("\\\\")
 
 
 def _expand_windows_vars(value: str, env: dict[str, str]) -> str:
