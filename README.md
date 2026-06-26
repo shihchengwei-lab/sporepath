@@ -5,9 +5,8 @@
 ![A small Sporepath scout organizes AI chat fragments into focus paths and latent idea spores](assets/hero-mascot.png)
 
 Local-first experiment for turning AI chat history into a living memory graph.
-After testing the idea against ArcRift, Sporepath is intentionally shifting
-toward a companion role: let ArcRift handle capture, RAG, MCP, and context
-injection; let Sporepath digest those memories into notes, metabolic focus
+ArcRift can be used as an optional web-chat capture source, but Sporepath is
+the memory layer: it digests chats into notes, metabolic focus paths, latent
 paths, and weird-but-bridged inspiration prompts.
 
 Sporepath grows the paths you use, and keeps forgotten thoughts ready to wake.
@@ -266,10 +265,10 @@ Use `--once --run-now` to run one batch immediately for testing.
 
 ## ArcRift Companion Mode
 
-ArcRift already does a better job at capture, RAG, MCP, graph dashboard, and
-context injection than this small repo should try to reimplement. Sporepath can
-use ArcRift as the memory source and stay focused on the layer ArcRift does not
-center: readable digestion, path metabolism, and `inspire`.
+ArcRift is optional here. Sporepath can import ArcRift's saved web chats, but it
+does not depend on ArcRift for the core memory loop. The core loop remains:
+local chat digestion, readable notes, path metabolism, Obsidian export, and
+`inspire`.
 
 Point Sporepath at an ArcRift SQLite database:
 

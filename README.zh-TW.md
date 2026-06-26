@@ -4,7 +4,7 @@
 
 ![一隻小小的 Sporepath scout 把 AI 對話碎片整理成專注路徑與潛在靈感孢子](assets/hero-mascot.png)
 
-Sporepath 是一個 local-first 實驗：把你和 AI 的聊天紀錄，轉成一張會代謝的記憶圖。
+Sporepath 是一個 local-first 實驗：把你和 AI 的聊天紀錄，轉成一張會代謝的記憶圖。ArcRift 可以作為選用的網頁聊天捕捉來源，但 Sporepath 自己才是記憶層：負責消化聊天、產生筆記、維持專注/潛在路徑，並在你卡住時產生「怪但有橋」的下一手。
 
 它不是另一個筆記庫。它想驗證的是：過去聊天裡留下的想法碎片，能不能變成兩層有用的思考路徑：
 
@@ -161,57 +161,6 @@ python -m sporepath --db qwen_trial.sqlite ingest $chat --extractor ollama --mod
 python -m sporepath --db qwen_trial.sqlite focus --limit 20
 ```
 
-## ArcRift Companion Mode
-
-ArcRift 已經把 capture、RAG、MCP、graph dashboard、context injection 做得比這個小 repo 更完整。Sporepath 接下來不要跟它正面重造底層輪子，而是把 ArcRift 當成記憶來源，自己專注在 ArcRift 沒有主打的那一層：可讀筆記消化、路徑代謝，以及 `inspire` 的「怪但有橋」下一手。
-
-指定 ArcRift 的 SQLite DB：
-
-```powershell
-$arc = Read-Host "Paste the full path to ArcRift.db"
-python -m sporepath --db my_memory.sqlite import-arcrift $arc
-python -m sporepath --db my_memory.sqlite digest
-python -m sporepath --db my_memory.sqlite export-vault "$env:USERPROFILE\Documents\Sporepath Vault"
-python -m sporepath --db my_memory.sqlite inspire "我現在卡住了，下一步該做什麼"
-```
-
-如果你是從 ArcRift repo 啟動，預設 SQLite 通常會在 backend 的工作目錄裡叫 `ArcRift.db`，除非你有設定 `SQLITE_DB_PATH`。Sporepath 會用唯讀模式打開 ArcRift DB，只讀 `full_chats.rawText`，不會修改 ArcRift 的資料庫。
-
-只匯入某個 ArcRift project 或 session id：
-
-```powershell
-python -m sporepath --db my_memory.sqlite import-arcrift $arc --project "My Project"
-```
-
-如果要讓 Sporepath 在 ArcRift 存入新聊天後自動同步：
-
-```powershell
-python -m sporepath --db real_memory.sqlite watch-arcrift `
-  --arcrift-db "$env:USERPROFILE\Desktop\GH_repos\ArcRift\backend\ArcRift.db" `
-  --vault "$env:USERPROFILE\Documents\Sporepath Vault" `
-  --graph real_graph.html
-```
-
-在這台機器上，`Sporepath.bat` 已經會替你啟動這個 watcher。
-
-如果要打開已載入 ArcRift extension 的專用 Chrome：
-
-```text
-Launch-ArcRift-Chrome.bat
-```
-
-如果要沿用已登入的平常 Chrome profile，並在重開時載入 ArcRift extension：
-
-```text
-Launch-ArcRift-Logged-In-Chrome.bat
-```
-
-小模型一定會有雜訊。它只是 scout，不是裁判。可以用 `show` 檢查它為什麼留下某個 atom：
-
-```powershell
-python -m sporepath --db qwen_trial.sqlite show <atom-id>
-```
-
 ## 背景消化 Queue
 
 慢 scout 不需要在你工作時即時跑。可以先把新聊天片段放進 queue，等離峰或電腦閒置時再慢慢整理：
@@ -266,6 +215,57 @@ python -m sporepath --db real_memory.sqlite queue-retry
 ```
 
 要測試時可以加 `--once --run-now`，立刻跑一批就結束。`Run-Sporepath-Queue-Worker.bat` 是這段流程的可雙擊版本。
+
+## ArcRift Companion Mode
+
+ArcRift 在這裡是選用來源。Sporepath 可以匯入 ArcRift 存下來的網頁聊天，但核心記憶迴路不依賴 ArcRift。Sporepath 的主體仍然是：本地聊天消化、可讀筆記、路徑代謝、Obsidian 匯出，以及 `inspire`。
+
+指定 ArcRift 的 SQLite DB：
+
+```powershell
+$arc = Read-Host "Paste the full path to ArcRift.db"
+python -m sporepath --db my_memory.sqlite import-arcrift $arc
+python -m sporepath --db my_memory.sqlite digest
+python -m sporepath --db my_memory.sqlite export-vault "$env:USERPROFILE\Documents\Sporepath Vault"
+python -m sporepath --db my_memory.sqlite inspire "我現在卡住了，下一步該做什麼"
+```
+
+如果你是從 ArcRift repo 啟動，預設 SQLite 通常會在 backend 的工作目錄裡叫 `ArcRift.db`，除非你有設定 `SQLITE_DB_PATH`。Sporepath 會用唯讀模式打開 ArcRift DB，只讀 `full_chats.rawText`，不會修改 ArcRift 的資料庫。
+
+只匯入某個 ArcRift project 或 session id：
+
+```powershell
+python -m sporepath --db my_memory.sqlite import-arcrift $arc --project "My Project"
+```
+
+如果要讓 Sporepath 在 ArcRift 存入新聊天後自動同步：
+
+```powershell
+python -m sporepath --db real_memory.sqlite watch-arcrift `
+  --arcrift-db "$env:USERPROFILE\Desktop\GH_repos\ArcRift\backend\ArcRift.db" `
+  --vault "$env:USERPROFILE\Documents\Sporepath Vault" `
+  --graph real_graph.html
+```
+
+在這台機器上，`Sporepath.bat` 已經會替你啟動這個 watcher。
+
+如果要打開已載入 ArcRift extension 的專用 Chrome：
+
+```text
+Launch-ArcRift-Chrome.bat
+```
+
+如果要沿用已登入的平常 Chrome profile，並在重開時載入 ArcRift extension：
+
+```text
+Launch-ArcRift-Logged-In-Chrome.bat
+```
+
+小模型一定會有雜訊。它只是 scout，不是裁判。可以用 `show` 檢查它為什麼留下某個 atom：
+
+```powershell
+python -m sporepath --db qwen_trial.sqlite show <atom-id>
+```
 
 ## 代謝後的筆記
 
