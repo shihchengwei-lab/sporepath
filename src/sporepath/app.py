@@ -3,7 +3,7 @@ from __future__ import annotations
 import os
 import threading
 from pathlib import Path
-from tkinter import BOTH, END, LEFT, RIGHT, Button, Entry, Frame, Label, StringVar, Text, Tk, filedialog
+from tkinter import BOTH, END, LEFT, RIGHT, Button, Entry, Frame, Label, StringVar, Text, Tk, Toplevel, filedialog
 
 from .app_config import AppConfig
 from .automation import sync_arcrift_memory
@@ -15,6 +15,21 @@ from .refresh import refresh_memory
 from .source_discovery import discover_sources
 from .store import MemoryStore
 from .vault_export import export_obsidian_vault, sync_obsidian_vault
+
+
+PRIMARY_ACTION_LABELS = ("Sync Vault", "Debug", "Inspire")
+DEBUG_ACTION_LABELS = (
+    "Auto-detect Sources",
+    "Import ArcRift",
+    "Refresh Now",
+    "Open Vault",
+    "Queue Status",
+    "Run Queue Batch",
+)
+
+
+def should_show_feedback_controls(run_id: str | None, suggestion_count: int) -> bool:
+    return bool(run_id) and suggestion_count > 0
 
 
 def run_app(config: AppConfig) -> None:
@@ -37,51 +52,51 @@ class SporepathApp(Frame):
         self.suggestion_var = StringVar(value="1")
         self.detected_source_paths: list[Path] = []
         self.last_inspire_run_id: str | None = None
+        self.last_inspire_suggestion_count = 0
+        self.debug_window: Toplevel | None = None
+        self.feedback_row: Frame
+        self.inspire_row: Frame
+        self.output_label: Label
         self.question: Text
         self.output: Text
         self._build()
 
     def _build(self) -> None:
-        self._path_row("Memory DB", self.db_var, browse_file=True)
-        self._path_row("Chat Export", self.input_var, browse_file=True)
-        self._path_row("ArcRift DB", self.arcrift_var, browse_file=True)
-        self._path_row("Obsidian Vault", self.vault_var, browse_dir=True)
-        self._path_row("Graph HTML", self.graph_var, browse_file=True)
-
-        button_row = Frame(self)
-        button_row.pack(fill="x", pady=(8, 12))
-        Button(button_row, text="Auto-detect Sources", command=self.detect_sources).pack(side=LEFT, padx=(0, 8))
-        Button(button_row, text="Import ArcRift", command=self.import_arcrift).pack(side=LEFT, padx=(0, 8))
-        Button(button_row, text="Refresh Now", command=self.refresh_now).pack(side=LEFT, padx=(0, 8))
-        Button(button_row, text="Sync Vault", command=self.sync_vault).pack(side=LEFT, padx=(0, 8))
-        Button(button_row, text="Open Vault", command=self.open_vault).pack(side=LEFT, padx=(0, 8))
-        Button(button_row, text="Queue Status", command=self.queue_status).pack(side=LEFT, padx=(0, 8))
-        Button(button_row, text="Run Queue Batch", command=self.run_queue_batch).pack(side=LEFT)
+        primary_row = Frame(self)
+        primary_row.pack(fill="x", pady=(0, 12))
+        Button(primary_row, text=PRIMARY_ACTION_LABELS[0], command=self.sync_vault).pack(side=LEFT, padx=(0, 8))
+        Button(primary_row, text=PRIMARY_ACTION_LABELS[1], command=self.open_debug_panel).pack(side=LEFT)
 
         Label(self, text="Question for Inspire").pack(anchor="w")
         self.question = Text(self, height=5, wrap="word")
         self.question.pack(fill="x", pady=(4, 8))
-        inspire_row = Frame(self)
-        inspire_row.pack(fill="x", pady=(0, 12))
-        Button(inspire_row, text="Inspire", command=self.inspire).pack(side=LEFT, padx=(0, 8))
-        Label(inspire_row, text="Suggestion id").pack(side=LEFT, padx=(0, 4))
-        Entry(inspire_row, textvariable=self.suggestion_var, width=8).pack(side=LEFT, padx=(0, 8))
-        Button(inspire_row, text="Mark Useful", command=self.mark_inspire_useful).pack(side=LEFT)
+        self.inspire_row = Frame(self)
+        self.inspire_row.pack(fill="x", pady=(0, 12))
+        Button(self.inspire_row, text=PRIMARY_ACTION_LABELS[2], command=self.inspire).pack(side=LEFT)
 
-        Label(self, text="Output").pack(anchor="w")
+        self.feedback_row = Frame(self)
+        self.feedback_row.pack(fill="x", pady=(0, 12))
+        Label(self.feedback_row, text="Suggestion id").pack(side=LEFT, padx=(0, 4))
+        Entry(self.feedback_row, textvariable=self.suggestion_var, width=8).pack(side=LEFT, padx=(0, 8))
+        Button(self.feedback_row, text="Mark Useful", command=self.mark_inspire_useful).pack(side=LEFT)
+        self.feedback_row.pack_forget()
+
+        self.output_label = Label(self, text="Output")
+        self.output_label.pack(anchor="w")
         self.output = Text(self, height=20, wrap="word")
         self.output.pack(fill=BOTH, expand=True, pady=(4, 0))
         self._write("Ready.\n")
 
     def _path_row(
         self,
+        parent: Frame | Toplevel,
         label: str,
         variable: StringVar,
         *,
         browse_file: bool = False,
         browse_dir: bool = False,
     ) -> None:
-        row = Frame(self)
+        row = Frame(parent)
         row.pack(fill="x", pady=3)
         Label(row, text=label, width=14, anchor="w").pack(side=LEFT)
         Entry(row, textvariable=variable).pack(side=LEFT, fill="x", expand=True, padx=(0, 8))
@@ -89,6 +104,51 @@ class SporepathApp(Frame):
             Button(row, text="Browse", command=lambda: self._browse_file(variable)).pack(side=RIGHT)
         if browse_dir:
             Button(row, text="Browse", command=lambda: self._browse_dir(variable)).pack(side=RIGHT)
+
+    def open_debug_panel(self) -> None:
+        if self.debug_window is not None and self.debug_window.winfo_exists():
+            self.debug_window.lift()
+            return
+        window = Toplevel(self)
+        self.debug_window = window
+        window.title("Sporepath Debug")
+        window.geometry("820x360")
+        window.protocol("WM_DELETE_WINDOW", self._close_debug_panel)
+
+        panel = Frame(window, padx=12, pady=12)
+        panel.pack(fill=BOTH, expand=True)
+        self._path_row(panel, "Memory DB", self.db_var, browse_file=True)
+        self._path_row(panel, "Chat Export", self.input_var, browse_file=True)
+        self._path_row(panel, "ArcRift DB", self.arcrift_var, browse_file=True)
+        self._path_row(panel, "Obsidian Vault", self.vault_var, browse_dir=True)
+        self._path_row(panel, "Graph HTML", self.graph_var, browse_file=True)
+
+        debug_row = Frame(panel)
+        debug_row.pack(fill="x", pady=(10, 0))
+        debug_actions = (
+            (DEBUG_ACTION_LABELS[0], self.detect_sources),
+            (DEBUG_ACTION_LABELS[1], self.import_arcrift),
+            (DEBUG_ACTION_LABELS[2], self.refresh_now),
+            (DEBUG_ACTION_LABELS[3], self.open_vault),
+            (DEBUG_ACTION_LABELS[4], self.queue_status),
+            (DEBUG_ACTION_LABELS[5], self.run_queue_batch),
+        )
+        for label, command in debug_actions:
+            Button(debug_row, text=label, command=command).pack(side=LEFT, padx=(0, 8))
+
+    def _close_debug_panel(self) -> None:
+        if self.debug_window is not None and self.debug_window.winfo_exists():
+            self.debug_window.destroy()
+        self.debug_window = None
+
+    def _show_feedback_controls(self) -> None:
+        if not should_show_feedback_controls(self.last_inspire_run_id, self.last_inspire_suggestion_count):
+            return
+        if not self.feedback_row.winfo_ismapped():
+            self.feedback_row.pack(fill="x", pady=(0, 12), before=self.output_label)
+
+    def _hide_feedback_controls(self) -> None:
+        self.feedback_row.pack_forget()
 
     def _browse_file(self, variable: StringVar) -> None:
         path = filedialog.askopenfilename()
@@ -126,7 +186,10 @@ class SporepathApp(Frame):
         self._run_background(self._sync_worker)
 
     def inspire(self) -> None:
-        self._run_background(self._inspire_worker)
+        self.last_inspire_run_id = None
+        self.last_inspire_suggestion_count = 0
+        self._hide_feedback_controls()
+        self._run_background(self._inspire_worker, after_success=self._show_feedback_controls)
 
     def queue_status(self) -> None:
         self._run_background(self._queue_status_worker)
@@ -257,6 +320,7 @@ class SporepathApp(Frame):
             suggestion_count = store.record_inspire_suggestions(run_id, suggestions)
             store.touch_atoms([atom.id for atom in focus_atoms + latent_atoms[:3]], amount=0.08)
             self.last_inspire_run_id = run_id
+            self.last_inspire_suggestion_count = suggestion_count
             suggestion_ids = ",".join(str(suggestion["suggestion_id"]) for suggestion in suggestions)
             suffix = f" suggestions={suggestion_ids}" if suggestion_count else ""
             result_text = f"{result.stdout}\n\ninspire_run={run_id}{suffix}\n"
@@ -284,15 +348,22 @@ class SporepathApp(Frame):
             f"bridges_strengthened={result['bridges_strengthened']}\n"
         )
 
-    def _run_background(self, func) -> None:
+    def _run_background(self, func, *, after_success=None) -> None:
         def runner() -> None:
+            success = True
             try:
                 message = func()
             except Exception as exc:
+                success = False
                 message = f"Error: {exc}\n"
-            self.after(0, lambda: self._write(message))
+            self.after(0, lambda: self._finish_background(message, success, after_success))
 
         threading.Thread(target=runner, daemon=True).start()
+
+    def _finish_background(self, message: str, success: bool, after_success) -> None:
+        self._write(message)
+        if success and after_success:
+            after_success()
 
     def _write(self, text: str) -> None:
         self.output.insert(END, text)

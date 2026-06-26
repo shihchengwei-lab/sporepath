@@ -75,20 +75,25 @@ and opens the small local Sporepath window.
   ArcRift writes the chat into `ArcRift.db`, Sporepath imports it through the
   same refresh pipeline.
 
-The window still exposes the everyday actions:
+The main window keeps the daily surface small:
 
-- **Refresh Now**: rebuild notes, export the Obsidian vault, and refresh the graph.
-- **Import ArcRift**: import ArcRift `full_chats` from a selected SQLite DB, then rebuild notes, vault, and graph.
 - **Sync Vault**: treat edited Obsidian notes as usage feedback and thicken their source atoms.
-- **Open Vault**: open the Markdown vault folder for Obsidian.
-- **Queue Status**: show pending, done, skipped, and error counts for background digestion.
-- **Run Queue Batch**: enqueue the selected chat export or detected local sources, then process a small rules-baseline batch.
 - **Inspire**: enter a stuck question and ask Codex for weird-but-bridged next moves.
-- **Mark Useful**: enter a returned suggestion id and thicken the bridge that actually helped.
+- **Mark Useful**: appears only after an `Inspire` run returns suggestion ids; use it to thicken the bridge that actually helped.
+- **Debug**: opens the maintenance panel.
+
+The **Debug** panel holds the manual recovery and setup actions:
+
+- **Auto-detect Sources**
+- **Import ArcRift**
+- **Refresh Now**
+- **Open Vault**
+- **Queue Status**
+- **Run Queue Batch**
 
 The batch launcher uses `real_memory.sqlite` in this checkout by default. The
-window still lets you edit the DB, chat export, vault, and graph paths before
-running anything.
+Debug panel lets you edit the DB, chat export, ArcRift DB, vault, and graph
+paths before running maintenance actions.
 
 If you only want the backend without opening Sporepath:
 

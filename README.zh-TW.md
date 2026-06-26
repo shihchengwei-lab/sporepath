@@ -98,20 +98,25 @@ Launch-ArcRift-Logged-In-Chrome.bat
 
 它會先關掉目前的 Chrome，然後嘗試用 `Default` profile 重新開啟，並載入 ArcRift extension。這條路可以沿用既有登入狀態，但會先關閉目前所有 Chrome 視窗。如果 Chrome 忽略 extension 參數，就手動安裝 unpacked ArcRift extension 一次，之後照常用平常的瀏覽器。
 
-它會打開一個本地小視窗，日常只需要三個動作：
+它會打開一個本地小視窗，主畫面只保留日常會用到的入口：
 
-- **Refresh Now**：重建 notes、匯出 Obsidian vault、更新 graph。
-- **Import ArcRift**：從指定 SQLite DB 匯入 ArcRift `full_chats`，然後重建 notes、vault 和 graph。
 - **Sync Vault**：把 Obsidian 裡改過的 notes 視為使用回饋，回流加粗 source atoms。
-- **Open Vault**：打開 Markdown vault 資料夾，讓 Obsidian 使用。
-- **Queue Status**：查看背景消化 queue 的 pending、done、skipped、error 數量。
-- **Run Queue Batch**：把目前聊天匯出檔或已偵測來源補進 queue，然後用 rules baseline 手動處理一小批。
 - **Inspire**：輸入卡住的問題，請 Codex 產生「怪但有橋」的下一手。
-- **Mark Useful**：輸入某個 `suggestion_id`，把真的有幫助的靈感橋加粗。
+- **Mark Useful**：只有 `Inspire` 回傳 `suggestion_id` 後才會出現，用來把真的有幫助的靈感橋加粗。
+- **Debug**：打開維修和設定面板。
 
-這個 batch launcher 預設使用 repo 裡的 `real_memory.sqlite`。視窗裡仍然可以修改 DB、聊天匯出檔、vault 和 graph 路徑。
+**Debug** 面板裡放手動救援和設定動作：
 
-按 **Auto-detect Sources** 可以尋找本機 Codex 和 Claude 的對話來源，也可以交給 source watcher 自動追蹤。Sporepath 只使用白名單中的可能對話來源：
+- **Auto-detect Sources**
+- **Import ArcRift**
+- **Refresh Now**
+- **Open Vault**
+- **Queue Status**
+- **Run Queue Batch**
+
+這個 batch launcher 預設使用 repo 裡的 `real_memory.sqlite`。Debug 面板裡仍然可以修改 DB、聊天匯出檔、ArcRift DB、vault 和 graph 路徑。
+
+Debug 裡的 **Auto-detect Sources** 可以尋找本機 Codex 和 Claude 的對話來源，也可以交給 source watcher 自動追蹤。Sporepath 只使用白名單中的可能對話來源：
 
 ```text
 {home}/.codex/history.jsonl
