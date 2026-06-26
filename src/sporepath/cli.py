@@ -53,6 +53,8 @@ def _enqueue_queue_inputs(store: MemoryStore, args) -> int:
         files,
         min_chars=args.min_chars,
         max_turns=args.max_turns,
+        dedupe=args.dedupe,
+        dedupe_threshold=args.dedupe_threshold,
     )
     return store.enqueue_fragments(fragments)
 
@@ -186,6 +188,9 @@ def main(argv: list[str] | None = None) -> int:
     queue_build.add_argument("--home", default=None, help="Override home directory for source detection.")
     queue_build.add_argument("--min-chars", type=int, default=12)
     queue_build.add_argument("--max-turns", type=int, default=None)
+    queue_build.add_argument("--no-dedupe", dest="dedupe", action="store_false", help="Keep near-duplicate fragments.")
+    queue_build.add_argument("--dedupe-threshold", type=float, default=0.92)
+    queue_build.set_defaults(dedupe=True)
 
     digest_queue = sub.add_parser("digest-queue", help="Process queued fragments during idle/off-peak time.")
     digest_queue.add_argument("--limit", type=int, default=10)
@@ -212,6 +217,9 @@ def main(argv: list[str] | None = None) -> int:
     queue_worker.add_argument("--run-now", action="store_true", help="Ignore --off-peak for this run.")
     queue_worker.add_argument("--min-chars", type=int, default=80)
     queue_worker.add_argument("--max-turns", type=int, default=None)
+    queue_worker.add_argument("--no-dedupe", dest="dedupe", action="store_false", help="Keep near-duplicate fragments.")
+    queue_worker.add_argument("--dedupe-threshold", type=float, default=0.92)
+    queue_worker.set_defaults(dedupe=True)
     queue_worker.add_argument("--extractor", choices=["rules", "ollama"], default="rules")
     queue_worker.add_argument("--model", default="qwen3:1.7b", help="Local Ollama model for --extractor ollama.")
     queue_worker.add_argument("--ollama-host", default="http://127.0.0.1:11434")
@@ -241,6 +249,9 @@ def main(argv: list[str] | None = None) -> int:
     eval_extract.add_argument("--max-turns", type=int, default=None)
     eval_extract.add_argument("--per-file-limit", type=int, default=None, help="Maximum eval cases to take from each source file.")
     eval_extract.add_argument("--checkpoint-every", type=int, default=None, help="Write partial JSONL/Markdown output every N cases.")
+    eval_extract.add_argument("--no-dedupe", dest="dedupe", action="store_false", help="Keep near-duplicate eval cases.")
+    eval_extract.add_argument("--dedupe-threshold", type=float, default=0.92)
+    eval_extract.set_defaults(dedupe=True)
     eval_extract.add_argument("--contains", action="append", default=[], help="Only include fragments containing this keyword; can be repeated.")
     eval_extract.add_argument("--extractor", choices=["rules", "ollama"], default="rules")
     eval_extract.add_argument("--model", default="qwen3:1.7b", help="Local Ollama model for --extractor ollama.")
@@ -524,6 +535,8 @@ def main(argv: list[str] | None = None) -> int:
             files,
             min_chars=args.min_chars,
             max_turns=args.max_turns,
+            dedupe=args.dedupe,
+            dedupe_threshold=args.dedupe_threshold,
         )
         inserted = store.enqueue_fragments(fragments)
         stats = store.queue_stats()
@@ -638,6 +651,8 @@ def main(argv: list[str] | None = None) -> int:
                 max_turns=args.max_turns,
                 per_file_limit=args.per_file_limit,
                 checkpoint_every=args.checkpoint_every,
+                dedupe=args.dedupe,
+                dedupe_threshold=args.dedupe_threshold,
                 contains=args.contains,
             )
         except ValueError as exc:

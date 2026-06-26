@@ -8,6 +8,7 @@ set "SPOREPATH_EVAL_REPORT=eval\qwen35_4b_eval.md"
 set "SPOREPATH_EVAL_LIMIT=50"
 set "SPOREPATH_EVAL_PER_FILE_LIMIT=1"
 set "SPOREPATH_EVAL_CHECKPOINT_EVERY=1"
+set "SPOREPATH_EVAL_DEDUPE_THRESHOLD=0.92"
 set "SPOREPATH_EVAL_MIN_CHARS=80"
 set "SPOREPATH_EVAL_MAX_CHARS=1400"
 set "SPOREPATH_OLLAMA_TIMEOUT=180"
@@ -31,6 +32,7 @@ python -m sporepath eval-extract ^
   --limit "%SPOREPATH_EVAL_LIMIT%" ^
   --per-file-limit "%SPOREPATH_EVAL_PER_FILE_LIMIT%" ^
   --checkpoint-every "%SPOREPATH_EVAL_CHECKPOINT_EVERY%" ^
+  --dedupe-threshold "%SPOREPATH_EVAL_DEDUPE_THRESHOLD%" ^
   --min-chars "%SPOREPATH_EVAL_MIN_CHARS%" ^
   --max-chars "%SPOREPATH_EVAL_MAX_CHARS%" ^
   --extractor ollama ^

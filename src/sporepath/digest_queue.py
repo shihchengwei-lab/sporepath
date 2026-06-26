@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Iterable
 
 from .extractors import Extractor
+from .fragment_filter import DEFAULT_DEDUPE_THRESHOLD, FragmentFilter
 from .ingest import (
     _atom_from_signal,
     _atom_from_turn,
@@ -41,6 +42,7 @@ def collect_fragments_from_file(
     *,
     min_chars: int = 12,
     max_turns: int | None = None,
+    fragment_filter: FragmentFilter | None = None,
 ) -> list[dict[str, object]]:
     path = Path(path)
     fragments: list[dict[str, object]] = []
@@ -51,6 +53,8 @@ def collect_fragments_from_file(
         turns_read += 1
         text = _clean_text(turn["text"])
         if _is_tool_noise(text) or len(text) < min_chars:
+            continue
+        if fragment_filter is not None and not fragment_filter.keep(text).keep:
             continue
         source = turn.get("source") or f"{path.name}:turn[{turns_read - 1}]"
         role = turn.get("role", "unknown")
@@ -73,11 +77,24 @@ def collect_fragments_from_files(
     *,
     min_chars: int = 12,
     max_turns: int | None = None,
+    dedupe: bool = True,
+    conservative: bool = True,
+    dedupe_threshold: float = DEFAULT_DEDUPE_THRESHOLD,
 ) -> list[dict[str, object]]:
     fragments: list[dict[str, object]] = []
+    fragment_filter = FragmentFilter(
+        dedupe=dedupe,
+        conservative=conservative,
+        threshold=dedupe_threshold,
+    )
     for path in paths:
         fragments.extend(
-            collect_fragments_from_file(path, min_chars=min_chars, max_turns=max_turns)
+            collect_fragments_from_file(
+                path,
+                min_chars=min_chars,
+                max_turns=max_turns,
+                fragment_filter=fragment_filter,
+            )
         )
     return fragments
 

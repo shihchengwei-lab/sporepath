@@ -10,6 +10,7 @@ set "SPOREPATH_QUEUE_OFF_PEAK=00:00-07:00"
 set "SPOREPATH_QUEUE_BATCH=5"
 set "SPOREPATH_QUEUE_INTERVAL=300"
 set "SPOREPATH_QUEUE_MIN_CHARS=80"
+set "SPOREPATH_QUEUE_DEDUPE_THRESHOLD=0.92"
 set "SPOREPATH_OLLAMA_TIMEOUT=180"
 set "SPOREPATH_OLLAMA_NUM_PREDICT=320"
 
@@ -29,6 +30,7 @@ if errorlevel 1 (
 python -m sporepath --db "%SPOREPATH_DB%" queue-worker ^
   --source all ^
   --min-chars "%SPOREPATH_QUEUE_MIN_CHARS%" ^
+  --dedupe-threshold "%SPOREPATH_QUEUE_DEDUPE_THRESHOLD%" ^
   --off-peak "%SPOREPATH_QUEUE_OFF_PEAK%" ^
   --batch-size "%SPOREPATH_QUEUE_BATCH%" ^
   --interval-s "%SPOREPATH_QUEUE_INTERVAL%" ^

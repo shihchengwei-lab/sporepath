@@ -8,6 +8,7 @@ from typing import Any, Iterable
 
 from .extractors import ExtractSignal, Extractor
 from .extractors import route_from_kind
+from .fragment_filter import DEFAULT_DEDUPE_THRESHOLD, FragmentFilter
 from .ingest import _clean_text, _is_tool_noise, _read_turns, classify_kind, infer_tags, score_importance, summarize
 from .source_discovery import expand_source_files
 
@@ -47,6 +48,9 @@ def build_extraction_eval(
     max_turns: int | None = None,
     per_file_limit: int | None = None,
     checkpoint_every: int | None = None,
+    dedupe: bool = False,
+    conservative_filter: bool = True,
+    dedupe_threshold: float = DEFAULT_DEDUPE_THRESHOLD,
     contains: Iterable[str] | None = None,
 ) -> ExtractionEvalResult:
     files = expand_source_files(input_paths)
@@ -60,6 +64,11 @@ def build_extraction_eval(
 
     records: list[dict[str, Any]] = []
     needles = [needle.casefold() for needle in (contains or []) if needle.strip()]
+    fragment_filter = FragmentFilter(
+        dedupe=dedupe,
+        conservative=conservative_filter,
+        threshold=dedupe_threshold,
+    )
     for source_file in files:
         turns_read = 0
         cases_from_file = 0
@@ -75,6 +84,8 @@ def build_extraction_eval(
             if max_chars is not None and len(text) > max_chars:
                 continue
             if needles and not any(needle in text.casefold() for needle in needles):
+                continue
+            if not fragment_filter.keep(text).keep:
                 continue
             role = turn.get("role", "unknown")
             source = turn.get("source") or f"{source_file.name}:turn[{turns_read - 1}]"

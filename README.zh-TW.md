@@ -221,6 +221,8 @@ python -m sporepath --db real_memory.sqlite queue-build --source all --min-chars
 python -m sporepath --db real_memory.sqlite queue-stats
 ```
 
+queue 收片段預設是保守的：會先跳過近似重複片段，以及一次性命令、recap 這類可丟噪音。這是刻意遺忘；只有在你故意想測重複案例時才加 `--no-dedupe`。
+
 先用 rules baseline 處理一小批：
 
 ```powershell
@@ -457,7 +459,7 @@ python -m sporepath eval-extract --source codex --limit 20 `
 Run-Sporepath-Qwen35-Eval.bat
 ```
 
-它會用 `qwen3.5:4b` 從白名單本地來源抽 50 筆、每個檔案最多 1 筆，並且每完成 1 筆就 checkpoint。輸出是 `eval\qwen35_4b_eval.jsonl` 和 `eval\qwen35_4b_eval.md`。
+它會用 `qwen3.5:4b` 從白名單本地來源抽 50 筆、每個檔案最多 1 筆，跳過近似重複片段，並且每完成 1 筆就 checkpoint。輸出是 `eval\qwen35_4b_eval.jsonl` 和 `eval\qwen35_4b_eval.md`。
 
 看完 Markdown 後，把 JSONL 裡的 `human` 欄位補上，再統計：
 

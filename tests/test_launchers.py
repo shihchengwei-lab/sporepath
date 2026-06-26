@@ -56,6 +56,7 @@ class LauncherTests(unittest.TestCase):
         self.assertIn("--source all", text)
         self.assertIn("--vault", text)
         self.assertIn("--graph", text)
+        self.assertIn("--dedupe-threshold", text)
         self.assertIn("qwen3.5:4b", text)
         self.assertIn("--off-peak", text)
         self.assertIn("00:00-07:00", text)
@@ -86,6 +87,7 @@ class LauncherTests(unittest.TestCase):
         self.assertIn("SPOREPATH_EVAL_LIMIT=50", text)
         self.assertIn("--per-file-limit", text)
         self.assertIn("--checkpoint-every", text)
+        self.assertIn("--dedupe-threshold", text)
         self.assertIn("qwen3.5:4b", text)
         self.assertIn("eval\\qwen35_4b_eval.jsonl", text)
 

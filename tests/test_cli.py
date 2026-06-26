@@ -124,6 +124,8 @@ class CliTests(unittest.TestCase):
         self.assertEqual(raised.exception.code, 0)
         self.assertIn("--ollama-timeout-s", out.getvalue())
         self.assertIn("--ollama-num-predict", out.getvalue())
+        self.assertIn("--no-dedupe", out.getvalue())
+        self.assertIn("--dedupe-threshold", out.getvalue())
 
     def test_queue_build_and_digest_queue_process_limit(self):
         with tempfile.TemporaryDirectory() as tmp:

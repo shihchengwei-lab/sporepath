@@ -215,6 +215,10 @@ python -m sporepath --db real_memory.sqlite queue-build --source all --min-chars
 python -m sporepath --db real_memory.sqlite queue-stats
 ```
 
+Queue collection is intentionally conservative. It skips near-duplicate
+fragments and disposable command/recap noise before the local scout sees them.
+Use `--no-dedupe` only when you intentionally want to test repeated cases.
+
 Process a small batch with the rules baseline:
 
 ```powershell
@@ -530,7 +534,7 @@ Run-Sporepath-Qwen35-Eval.bat
 ```
 
 That samples 50 allowlisted local sources with `qwen3.5:4b`, caps the sample at
-one case per file, checkpoints after every case, and writes
+one case per file, skips near-duplicates, checkpoints after every case, and writes
 `eval\qwen35_4b_eval.jsonl` plus `eval\qwen35_4b_eval.md`.
 
 After reviewing the Markdown, fill the `human` fields in the JSONL file, then

@@ -4,7 +4,12 @@ import unittest
 from datetime import time
 from pathlib import Path
 
-from sporepath.digest_queue import collect_fragments_from_file, is_off_peak_window, process_digest_queue
+from sporepath.digest_queue import (
+    collect_fragments_from_file,
+    collect_fragments_from_files,
+    is_off_peak_window,
+    process_digest_queue,
+)
 from sporepath.extractors import ExtractSignal
 from sporepath.store import MemoryStore
 
@@ -116,6 +121,41 @@ class DigestQueueTests(unittest.TestCase):
         self.assertEqual(retried_stats.get("error", 0), 0)
         self.assertEqual(retried_stats["pending"], 1)
         self.assertEqual(retried_stats["done"], 1)
+
+    def test_queue_collection_dedupes_and_filters_disposable_fragments(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            first = Path(tmp) / "a.jsonl"
+            second = Path(tmp) / "b.jsonl"
+            duplicate = "Add support for TSV input. Keep python3 -m pytest -q green."
+            first.write_text(
+                "\n".join(
+                    [
+                        json.dumps({"role": "user", "content": duplicate}),
+                        json.dumps(
+                            {
+                                "role": "user",
+                                "content": "<command-name>/remote-control</command-name> <command-message>remote-control</command-message>",
+                            }
+                        ),
+                    ]
+                ),
+                encoding="utf-8",
+            )
+            second.write_text(
+                "\n".join(
+                    [
+                        json.dumps({"role": "user", "content": duplicate}),
+                        json.dumps({"role": "user", "content": "Add export command for notes as JSON."}),
+                    ]
+                ),
+                encoding="utf-8",
+            )
+
+            fragments = collect_fragments_from_files([first, second], min_chars=5)
+
+        self.assertEqual(len(fragments), 2)
+        self.assertEqual([fragment["text"] for fragment in fragments].count(duplicate), 1)
+        self.assertFalse(any("remote-control" in fragment["text"] for fragment in fragments))
 
 
 if __name__ == "__main__":

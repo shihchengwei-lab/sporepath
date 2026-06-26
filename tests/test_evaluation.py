@@ -169,6 +169,39 @@ class EvaluationTests(unittest.TestCase):
         self.assertEqual(counts["a.jsonl"], 2)
         self.assertEqual(counts["b.jsonl"], 2)
 
+    def test_build_extraction_eval_can_dedupe_across_files(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            first = root / "a.jsonl"
+            second = root / "b.jsonl"
+            out = root / "eval.jsonl"
+            duplicate = "Add support for TSV input. Keep python3 -m pytest -q green."
+            first.write_text(
+                json.dumps({"role": "user", "content": duplicate}),
+                encoding="utf-8",
+            )
+            second.write_text(
+                "\n".join(
+                    [
+                        json.dumps({"role": "user", "content": duplicate}),
+                        json.dumps({"role": "user", "content": "Add export command for notes as JSON."}),
+                    ]
+                ),
+                encoding="utf-8",
+            )
+
+            result = build_extraction_eval(
+                input_paths=[root],
+                out_path=out,
+                limit=3,
+                min_chars=5,
+                dedupe=True,
+            )
+            records = [json.loads(line) for line in out.read_text(encoding="utf-8").splitlines()]
+
+        self.assertEqual(result.cases_written, 2)
+        self.assertEqual([record["text"] for record in records].count(duplicate), 1)
+
     def test_build_extraction_eval_accepts_checkpoint_writes(self):
         with tempfile.TemporaryDirectory() as tmp:
             chat = Path(tmp) / "chat.jsonl"
