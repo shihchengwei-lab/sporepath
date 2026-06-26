@@ -45,9 +45,28 @@ class LauncherTests(unittest.TestCase):
     def test_auto_launcher_starts_sources_watcher(self):
         launcher = ROOT / "Sporepath-Auto.bat"
         text = launcher.read_text(encoding="utf-8")
+        ps1_text = (ROOT / "Run-Sporepath-Auto.ps1").read_text(encoding="utf-8")
 
-        self.assertIn("Run-Sporepath-Sources-Watcher.bat", text)
+        self.assertIn("Run-Sporepath-Auto.ps1", text)
+        self.assertNotIn('start "Sporepath Sources Watcher"', text)
+        self.assertIn("Run-Sporepath-Sources-Watcher.bat", ps1_text)
         self.assertNotIn('start "Sporepath ArcRift Watcher"', text)
+
+    def test_auto_powershell_launcher_cleans_up_worker_processes(self):
+        launcher = ROOT / "Run-Sporepath-Auto.ps1"
+        text = launcher.read_text(encoding="utf-8")
+
+        self.assertIn("Start-ArcRift.bat", text)
+        self.assertIn("Run-Sporepath-Sources-Watcher.bat", text)
+        self.assertIn("Run-Sporepath-Queue-Worker.bat", text)
+        self.assertIn("-PassThru", text)
+        self.assertIn("try", text)
+        self.assertIn("finally", text)
+        self.assertIn("taskkill.exe", text)
+        self.assertIn("/T", text)
+        self.assertIn("python", text)
+        self.assertIn("app", text)
+        self.assertNotIn("Run-Sporepath-Watcher.bat", text)
 
     def test_queue_worker_launcher_runs_off_peak_scout(self):
         launcher = ROOT / "Run-Sporepath-Queue-Worker.bat"
@@ -109,7 +128,7 @@ class LauncherTests(unittest.TestCase):
         self.assertIn("eval\\qwen17_eval.clean.jsonl", text)
 
     def test_auto_launcher_starts_queue_worker(self):
-        launcher = ROOT / "Sporepath-Auto.bat"
+        launcher = ROOT / "Run-Sporepath-Auto.ps1"
         text = launcher.read_text(encoding="utf-8")
 
         self.assertIn("Run-Sporepath-Queue-Worker.bat", text)
