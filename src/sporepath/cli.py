@@ -25,6 +25,13 @@ from .refresh import refresh_memory
 from .source_discovery import discover_sources, expand_source_files, sources_for_labels
 from .source_watch import build_source_snapshot, source_snapshot_changed
 from .store import MemoryStore
+from .validation import (
+    validate_inspire,
+    validate_notes,
+    validate_report,
+    validate_scout,
+    write_validation_result,
+)
 from .vault_export import export_obsidian_vault, sync_obsidian_vault
 
 
@@ -262,6 +269,20 @@ def main(argv: list[str] | None = None) -> int:
 
     eval_score = sub.add_parser("eval-score", help="Summarize a filled extraction eval JSONL sheet.")
     eval_score.add_argument("path")
+
+    validate_scout_cmd = sub.add_parser("validate-scout", help="Validate a scout extraction eval JSONL sheet.")
+    validate_scout_cmd.add_argument("path")
+    validate_scout_cmd.add_argument("--out", default=None, help="Optional Markdown report output path.")
+
+    validate_notes_cmd = sub.add_parser("validate-notes", help="Validate generated digested notes in the SQLite memory DB.")
+    validate_notes_cmd.add_argument("--out", default=None, help="Optional Markdown report output path.")
+
+    validate_inspire_cmd = sub.add_parser("validate-inspire", help="Validate inspire runs and feedback loop usage.")
+    validate_inspire_cmd.add_argument("--out", default=None, help="Optional Markdown report output path.")
+
+    validate_report_cmd = sub.add_parser("validate-report", help="Write a combined Sporepath validation report.")
+    validate_report_cmd.add_argument("--scout-eval", default=None, help="Optional scout eval JSONL sheet to include.")
+    validate_report_cmd.add_argument("--out", default=None, help="Optional Markdown report output path.")
 
     app = sub.add_parser("app", help="Open the small Sporepath desktop window.")
     app.add_argument("--dry-run", action="store_true", help="Print the app defaults without opening a window.")
@@ -674,6 +695,40 @@ def main(argv: list[str] | None = None) -> int:
             f"noise_marked={result.noise_marked_rate:.1%} "
             f"handoff_sufficient={result.handoff_sufficient_rate:.1%}"
         )
+        return 0
+
+    if args.command == "validate-scout":
+        result = validate_scout(args.path)
+        out = write_validation_result(result, args.out)
+        print(f"verdict={result.verdict} total_cases={result.metrics['total_cases']} scored_cases={result.metrics['scored_cases']}")
+        if out:
+            print(f"Report: {out.resolve()}")
+        return 0
+
+    if args.command == "validate-notes":
+        result = validate_notes(store)
+        out = write_validation_result(result, args.out)
+        print(f"verdict={result.verdict} notes={result.metrics['notes_count']} atoms={result.metrics['atoms_count']}")
+        if out:
+            print(f"Report: {out.resolve()}")
+        return 0
+
+    if args.command == "validate-inspire":
+        result = validate_inspire(store)
+        out = write_validation_result(result, args.out)
+        print(f"verdict={result.verdict} runs={result.metrics['runs_count']} positive_feedback={result.metrics['positive_feedback_count']}")
+        if out:
+            print(f"Report: {out.resolve()}")
+        return 0
+
+    if args.command == "validate-report":
+        result = validate_report(store, scout_eval_path=args.scout_eval)
+        out = write_validation_result(result, args.out)
+        print(f"verdict={result.verdict} sections={result.metrics['sections']}")
+        if out:
+            print(f"Report: {out.resolve()}")
+        elif result.markdown:
+            print(result.markdown)
         return 0
 
     if args.command == "sources":

@@ -556,6 +556,45 @@ note. Judge whether it behaved like a useful scout:
 The command reports pass rate, keep agreement, route agreement, signal-found
 rate, noise-marked rate, and handoff-sufficient rate.
 
+## Validators
+
+Sporepath's goal is not "store every chat forever." A useful build should pass
+three narrower checks:
+
+- **Scout quality**: the local scout keeps reusable fragments, rejects tool
+  noise, and writes a handoff that is good enough for a cloud model later.
+- **Note usability**: digested notes are not empty, keep their source anchors,
+  and do not collapse into duplicate titles.
+- **Inspire feedback**: `inspire` runs produce suggestions that you actually
+  mark as useful often enough to justify the workflow.
+
+Run the checks separately:
+
+```powershell
+python -m sporepath validate-scout eval\qwen_eval.jsonl --out eval\validation_scout.md
+python -m sporepath --db my_memory.sqlite validate-notes --out eval\validation_notes.md
+python -m sporepath --db my_memory.sqlite validate-inspire --out eval\validation_inspire.md
+```
+
+Or write one combined report:
+
+```powershell
+python -m sporepath --db my_memory.sqlite validate-report `
+  --scout-eval eval\qwen_eval.jsonl `
+  --out eval\sporepath_validation.md
+```
+
+Verdicts are deliberately conservative:
+
+- `pass`: the measured health checks are above the current target.
+- `fail`: the data exists, but at least one target is below the line.
+- `needs_data`: the validator cannot judge yet because the repo has not
+  collected enough scored eval rows, generated notes, or inspire feedback.
+
+These validators are meant to catch structural problems. They still do not
+replace the human judgment step: only you can say whether a note feels worth
+opening again or whether an inspired move changed the next action.
+
 ## Current Limits
 
 - Edges currently include shared-tag evidence and confidence metadata, but they

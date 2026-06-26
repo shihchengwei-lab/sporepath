@@ -6,7 +6,7 @@ from contextlib import redirect_stdout
 from pathlib import Path
 
 from sporepath.cli import main
-from sporepath.models import ThoughtAtom
+from sporepath.models import DigestedNote, ThoughtAtom
 from sporepath.store import MemoryStore
 
 
@@ -126,6 +126,100 @@ class CliTests(unittest.TestCase):
         self.assertIn("--ollama-num-predict", out.getvalue())
         self.assertIn("--no-dedupe", out.getvalue())
         self.assertIn("--dedupe-threshold", out.getvalue())
+
+    def test_validate_scout_writes_report(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            sheet = Path(tmp) / "eval.jsonl"
+            report = Path(tmp) / "scout.md"
+            sheet.write_text(
+                json.dumps(
+                    {
+                        "id": "good",
+                        "text": "Useful memory",
+                        "prediction": {"keep": True, "route": "debug", "tags": [], "handoff": "Use it."},
+                        "human": {
+                            "keep": True,
+                            "route": "debug",
+                            "signal_found": True,
+                            "noise_marked": True,
+                            "handoff_sufficient": True,
+                            "useful": True,
+                        },
+                    }
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            out = io.StringIO()
+
+            with redirect_stdout(out):
+                code = main(["validate-scout", str(sheet), "--out", str(report)])
+            report_exists = report.exists()
+            report_text = report.read_text(encoding="utf-8")
+
+        self.assertEqual(code, 0)
+        self.assertTrue(report_exists)
+        self.assertIn("Scout Validator", report_text)
+        self.assertIn("verdict=", out.getvalue())
+
+    def test_validate_notes_inspire_and_report_commands(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            db = Path(tmp) / "memory.sqlite"
+            notes_report = Path(tmp) / "notes.md"
+            inspire_report = Path(tmp) / "inspire.md"
+            combined_report = Path(tmp) / "report.md"
+            store = MemoryStore(db)
+            store.upsert_atoms(
+                [
+                    ThoughtAtom(
+                        id="a1",
+                        source="chat.jsonl:line[1]",
+                        role="user",
+                        text="Useful memory",
+                        summary="Useful memory",
+                        kind="idea",
+                        tags=["memory"],
+                        timestamp=None,
+                        importance=0.7,
+                        activation=0.5,
+                        metadata={},
+                    )
+                ]
+            )
+            store.upsert_notes(
+                [
+                    DigestedNote(
+                        id="n1",
+                        title="Concept note: memory",
+                        note_type="concept_note",
+                        summary="Useful note",
+                        key_points=["Useful memory"],
+                        open_questions=[],
+                        tags=["memory"],
+                        source_atom_ids=["a1"],
+                        source_spans=["chat.jsonl:line[1]"],
+                        activation=0.5,
+                        metadata={},
+                    )
+                ]
+            )
+
+            with redirect_stdout(io.StringIO()):
+                notes_code = main(["--db", str(db), "validate-notes", "--out", str(notes_report)])
+            with redirect_stdout(io.StringIO()):
+                inspire_code = main(["--db", str(db), "validate-inspire", "--out", str(inspire_report)])
+            with redirect_stdout(io.StringIO()):
+                report_code = main(["--db", str(db), "validate-report", "--out", str(combined_report)])
+            notes_text = notes_report.read_text(encoding="utf-8")
+            inspire_text = inspire_report.read_text(encoding="utf-8")
+            combined_text = combined_report.read_text(encoding="utf-8")
+
+        self.assertEqual(notes_code, 0)
+        self.assertEqual(inspire_code, 0)
+        self.assertEqual(report_code, 0)
+        self.assertIn("Notes Validator", notes_text)
+        self.assertIn("Inspire Validator", inspire_text)
+        self.assertIn("Sporepath Validation Report", combined_text)
 
     def test_queue_build_and_digest_queue_process_limit(self):
         with tempfile.TemporaryDirectory() as tmp:
