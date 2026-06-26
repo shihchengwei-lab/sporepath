@@ -103,7 +103,7 @@ If you only want the off-peak queue worker:
 Run-Sporepath-Queue-Worker.bat
 ```
 
-It defaults to `qwen3.5:4b`, `00:00-07:00`, batch size `5`, auto-feeds
+It defaults to `qwen3:1.7b`, `00:00-07:00`, batch size `5`, auto-feeds
 allowlisted local sources with `--source all`, refreshes the Obsidian vault and
 HTML graph after new atoms are created, and checks that Ollama and the model
 exist before starting.
@@ -225,14 +225,14 @@ Process a small batch with the rules baseline:
 python -m sporepath --db real_memory.sqlite digest-queue --extractor rules --limit 25
 ```
 
-Process a slower local scout such as `qwen3.5:4b`:
+Process with the current validated local scout:
 
 ```powershell
 python -m sporepath --db real_memory.sqlite digest-queue `
   --extractor ollama `
-  --model qwen3.5:4b `
-  --ollama-timeout-s 180 `
-  --ollama-num-predict 320 `
+  --model qwen3:1.7b `
+  --ollama-timeout-s 120 `
+  --ollama-num-predict 260 `
   --limit 10
 ```
 
@@ -256,9 +256,9 @@ python -m sporepath --db real_memory.sqlite queue-worker `
   --vault "$env:USERPROFILE\Documents\Sporepath Vault" `
   --graph real_graph.html `
   --extractor ollama `
-  --model qwen3.5:4b `
-  --ollama-timeout-s 180 `
-  --ollama-num-predict 320
+  --model qwen3:1.7b `
+  --ollama-timeout-s 120 `
+  --ollama-num-predict 260
 ```
 
 Use `--once --run-now` to run one batch immediately for testing.
@@ -541,17 +541,17 @@ degenerate output or invalid JSON, Sporepath stops before spending time on a
 noisy sheet. Use `--skip-model-check` only when you intentionally want to debug
 raw model failures.
 
-For the current middle-ground scout, run:
+For the current validated scout, run:
 
 ```text
-Run-Sporepath-Qwen35-Eval.bat
+Run-Sporepath-Qwen17-Eval.bat
 ```
 
-That samples 50 allowlisted local sources with `qwen3.5:4b`, caps the sample at
+That samples 35 allowlisted local sources with `qwen3:1.7b`, caps the sample at
 one case per file, skips near-duplicates, checkpoints after every case, and writes
-`eval\qwen35_4b_eval.jsonl` plus `eval\qwen35_4b_eval.md`. It then runs
-`eval-clean` and writes `eval\qwen35_4b_eval.clean.jsonl` plus
-`eval\qwen35_4b_eval.clean.md`; review and score the clean sheet first.
+`eval\qwen17_eval.jsonl` plus `eval\qwen17_eval.md`. It then runs
+`eval-clean` and writes `eval\qwen17_eval.clean.jsonl` plus
+`eval\qwen17_eval.clean.md`; review and score the clean sheet first.
 
 After reviewing the Markdown, fill the `human` fields in the JSONL file, then
 summarize:
@@ -630,7 +630,10 @@ opening again or whether an inspired move changed the next action.
 
 - Edges currently include shared-tag evidence and confidence metadata, but they
   are still not true semantic embeddings.
-- `qwen3:1.7b` can extract useful candidates, but it also creates noise.
+- `qwen3:1.7b` passed the scout validator on one 31-case clean eval, but it
+  still creates false positives and needs continued sampling.
+- On this machine, `qwen3.5:4b` was slower and produced invalid JSON on some
+  scout prompts; keep it experimental until it passes `validate-scout`.
 - ArcRift import currently reads `full_chats.rawText` only; it does not import
   ArcRift facts, vector chunks, or retrieval scores yet.
 - `digest` is currently rules-based grouping, not high-quality editorial

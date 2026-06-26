@@ -25,6 +25,14 @@ class FragmentFilterTests(unittest.TestCase):
             )
         )
 
+    def test_rejects_synthetic_coding_benchmark_prompts(self):
+        self.assertTrue(
+            is_disposable_fragment(
+                "Add support for TSV input. We'll likely add more input formats "
+                "(XML, YAML) later. Keep `python3 -m pytest -q` green."
+            )
+        )
+
     def test_rejects_stale_recaps_but_keeps_actionable_pitch_context(self):
         self.assertTrue(
             is_disposable_fragment(
@@ -52,12 +60,10 @@ class FragmentFilterTests(unittest.TestCase):
         gate = FragmentFilter(dedupe=True)
 
         first = gate.keep(
-            "Add support for TSV input. We'll likely add more input formats "
-            "(XML, YAML) later. Keep python3 -m pytest -q green."
+            "The restore-purchase flow can leave ownership state stale after app restart."
         )
         second = gate.keep(
-            "Add support for TSV input. We'll likely add more input formats "
-            "(XML, YAML) later. Keep python3 -m pytest -q green."
+            "The restore-purchase flow can leave ownership state stale after app restart."
         )
 
         self.assertTrue(first.keep)

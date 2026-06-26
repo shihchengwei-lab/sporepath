@@ -5,14 +5,14 @@ set "PYTHONPATH=src"
 set "SPOREPATH_DB=real_memory.sqlite"
 set "SPOREPATH_VAULT=%USERPROFILE%\Documents\Sporepath Vault"
 set "SPOREPATH_GRAPH=real_graph.html"
-set "SPOREPATH_QUEUE_MODEL=qwen3.5:4b"
+set "SPOREPATH_QUEUE_MODEL=qwen3:1.7b"
 set "SPOREPATH_QUEUE_OFF_PEAK=00:00-07:00"
 set "SPOREPATH_QUEUE_BATCH=5"
 set "SPOREPATH_QUEUE_INTERVAL=300"
 set "SPOREPATH_QUEUE_MIN_CHARS=80"
 set "SPOREPATH_QUEUE_DEDUPE_THRESHOLD=0.92"
-set "SPOREPATH_OLLAMA_TIMEOUT=180"
-set "SPOREPATH_OLLAMA_NUM_PREDICT=320"
+set "SPOREPATH_OLLAMA_TIMEOUT=120"
+set "SPOREPATH_OLLAMA_NUM_PREDICT=260"
 
 where ollama >nul 2>nul
 if errorlevel 1 (
@@ -20,7 +20,7 @@ if errorlevel 1 (
   exit /b 2
 )
 
-ollama list | findstr /C:"%SPOREPATH_QUEUE_MODEL%" >nul
+ollama show "%SPOREPATH_QUEUE_MODEL%" >nul 2>nul
 if errorlevel 1 (
   echo Model %SPOREPATH_QUEUE_MODEL% was not found.
   echo Install it first: ollama pull %SPOREPATH_QUEUE_MODEL%

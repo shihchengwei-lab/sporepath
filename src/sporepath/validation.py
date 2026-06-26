@@ -45,6 +45,11 @@ def validate_scout(path: str | Path) -> ValidationResult:
         for human, prediction in zip(humans, predictions)
         if human.get("keep") is True and prediction.get("keep") is False
     )
+    false_positive_count = sum(
+        1
+        for human, prediction in zip(humans, predictions)
+        if human.get("keep") is False and prediction.get("keep") is True
+    )
     total = len(records)
     metrics = {
         "total_cases": total,
@@ -62,6 +67,8 @@ def validate_scout(path: str | Path) -> ValidationResult:
         "tool_noise_retained_rate": _ratio(tool_noise_retained_count, total),
         "false_negative_count": false_negative_count,
         "false_negative_rate": _ratio(false_negative_count, score.scored_cases),
+        "false_positive_count": false_positive_count,
+        "false_positive_rate": _ratio(false_positive_count, score.scored_cases),
     }
     if total == 0 or score.scored_cases < MINIMUM_SCOUT_SCORED_CASES:
         verdict = "needs_data"
@@ -70,6 +77,7 @@ def validate_scout(path: str | Path) -> ValidationResult:
         and metrics["duplicate_rate"] <= 0.10
         and metrics["tool_noise_retained_rate"] <= 0.05
         and metrics["false_negative_rate"] <= 0.15
+        and metrics["false_positive_rate"] <= 0.15
         and metrics["handoff_sufficient_rate"] >= 0.75
     ):
         verdict = "pass"
@@ -258,8 +266,9 @@ def _render_scout_markdown(path: Path, verdict: str, metrics: dict[str, Any]) ->
             f"- Duplicate rate: {_pct(metrics['duplicate_rate'])}",
             f"- Tool noise retained: {_pct(metrics['tool_noise_retained_rate'])}",
             f"- False negatives: {metrics['false_negative_count']} ({_pct(metrics['false_negative_rate'])})",
+            f"- False positives: {metrics['false_positive_count']} ({_pct(metrics['false_positive_rate'])})",
             "",
-            "Targets: parse errors <= 3%, duplicates <= 10%, tool noise retained <= 5%, false negatives <= 15%, handoff sufficient >= 75%.",
+            "Targets: parse errors <= 3%, duplicates <= 10%, tool noise retained <= 5%, false negatives <= 15%, false positives <= 15%, handoff sufficient >= 75%.",
         ]
     )
 

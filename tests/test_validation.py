@@ -84,8 +84,56 @@ class ValidationTests(unittest.TestCase):
         self.assertEqual(result.metrics["total_cases"], 30)
         self.assertEqual(result.metrics["parse_error_count"], 1)
         self.assertEqual(result.metrics["false_negative_count"], 1)
+        self.assertEqual(result.metrics["false_positive_count"], 0)
         self.assertEqual(result.verdict, "fail")
         self.assertIn("Scout Validator", result.markdown)
+
+    def test_validate_scout_fails_when_model_keeps_noise(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            sheet = Path(tmp) / "eval.jsonl"
+            rows = []
+            for index in range(24):
+                rows.append(
+                    {
+                        "id": f"good-{index}",
+                        "text": f"Useful memory {index}",
+                        "prediction": {"keep": True, "route": "idea", "tags": [], "handoff": "Use later."},
+                        "human": {
+                            "keep": True,
+                            "route": "idea",
+                            "signal_found": True,
+                            "noise_marked": True,
+                            "handoff_sufficient": True,
+                            "useful": True,
+                        },
+                    }
+                )
+            for index in range(6):
+                rows.append(
+                    {
+                        "id": f"noise-{index}",
+                        "text": f"Disposable status recap {index}",
+                        "prediction": {"keep": True, "route": "ops", "tags": [], "handoff": "Use later."},
+                        "human": {
+                            "keep": False,
+                            "route": "other",
+                            "signal_found": False,
+                            "noise_marked": False,
+                            "handoff_sufficient": False,
+                            "useful": False,
+                        },
+                    }
+                )
+            sheet.write_text(
+                "\n".join(json.dumps(row, ensure_ascii=False) for row in rows),
+                encoding="utf-8",
+            )
+
+            result = validate_scout(sheet)
+
+        self.assertEqual(result.verdict, "fail")
+        self.assertEqual(result.metrics["false_positive_count"], 6)
+        self.assertAlmostEqual(result.metrics["false_positive_rate"], 0.2)
 
     def test_validate_scout_needs_enough_scored_cases(self):
         with tempfile.TemporaryDirectory() as tmp:

@@ -66,6 +66,8 @@ def is_disposable_fragment(text: str) -> bool:
         return True
     if _looks_like_shell_transcript(folded):
         return True
+    if _looks_like_synthetic_coding_prompt(folded):
+        return True
     if _looks_like_stale_recap(folded):
         return True
     return False
@@ -104,6 +106,16 @@ def _looks_like_shell_transcript(folded: str) -> bool:
     if re.search(r"^[\w.-]+@[\w.-]+:[^$#]+[$#]\s+", folded):
         return True
     return " cat > " in folded and " <<'eof'" in folded
+
+
+def _looks_like_synthetic_coding_prompt(folded: str) -> bool:
+    return (
+        folded.startswith("add ")
+        and "we'll likely add more" in folded
+        and "keep " in folded
+        and "python3 -m pytest -q" in folded
+        and " green" in folded
+    )
 
 
 def _looks_like_stale_recap(folded: str) -> bool:
