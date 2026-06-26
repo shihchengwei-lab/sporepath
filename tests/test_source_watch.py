@@ -7,7 +7,12 @@ from pathlib import Path
 
 from sporepath.cli import main
 from sporepath.source_discovery import expand_source_files
-from sporepath.source_watch import SourceSnapshot, build_source_snapshot, source_snapshot_changed
+from sporepath.source_watch import (
+    SourceSnapshot,
+    build_source_snapshot,
+    source_snapshot_changed,
+    sqlite_watch_paths,
+)
 from sporepath.store import MemoryStore
 
 
@@ -69,6 +74,25 @@ class SourceWatchTests(unittest.TestCase):
             (source_dir / "settings.json").write_text("{}", encoding="utf-8")
 
             self.assertFalse(source_snapshot_changed(before, [source_dir]))
+
+    def test_sqlite_watch_paths_include_wal_and_shm(self):
+        db = Path("ArcRift.db")
+
+        self.assertEqual(
+            sqlite_watch_paths(db),
+            [db, Path("ArcRift.db-wal"), Path("ArcRift.db-shm")],
+        )
+
+    def test_sqlite_snapshot_detects_wal_creation(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            db = Path(tmp) / "ArcRift.db"
+            db.write_text("db", encoding="utf-8")
+            before = SourceSnapshot.from_paths(sqlite_watch_paths(db))
+
+            (Path(str(db) + "-wal")).write_text("wal", encoding="utf-8")
+            after = SourceSnapshot.from_paths(sqlite_watch_paths(db))
+
+        self.assertNotEqual(before, after)
 
     def test_watch_sources_once_refreshes_detected_sources(self):
         with tempfile.TemporaryDirectory() as tmp:

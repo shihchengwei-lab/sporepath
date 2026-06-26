@@ -6,7 +6,8 @@ from contextlib import closing, redirect_stdout
 from pathlib import Path
 
 from sporepath.automation import default_arcrift_db_path, sync_arcrift_memory
-from sporepath.cli import main
+from sporepath.cli import main, should_sync_arcrift_tick
+from sporepath.source_watch import SourceSnapshot, sqlite_watch_paths
 from sporepath.store import MemoryStore
 
 
@@ -99,6 +100,37 @@ class ArcRiftAutoTests(unittest.TestCase):
 
         self.assertEqual(code, 0)
         self.assertIn("ArcRift sync complete", out.getvalue())
+
+    def test_watch_arcrift_tick_skips_when_db_snapshot_unchanged(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            arcrift_db = Path(tmp) / "ArcRift.db"
+            _create_arcrift_db(arcrift_db)
+            snapshot = SourceSnapshot.from_paths(sqlite_watch_paths(arcrift_db))
+
+            should_sync, next_snapshot = should_sync_arcrift_tick(
+                snapshot,
+                arcrift_db,
+                force=False,
+            )
+
+        self.assertFalse(should_sync)
+        self.assertEqual(next_snapshot, snapshot)
+
+    def test_watch_arcrift_tick_syncs_when_wal_changes(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            arcrift_db = Path(tmp) / "ArcRift.db"
+            _create_arcrift_db(arcrift_db)
+            snapshot = SourceSnapshot.from_paths(sqlite_watch_paths(arcrift_db))
+            Path(str(arcrift_db) + "-wal").write_text("changed", encoding="utf-8")
+
+            should_sync, next_snapshot = should_sync_arcrift_tick(
+                snapshot,
+                arcrift_db,
+                force=False,
+            )
+
+        self.assertTrue(should_sync)
+        self.assertNotEqual(next_snapshot, snapshot)
 
 
 def _create_arcrift_db(path: Path) -> None:

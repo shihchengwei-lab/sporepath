@@ -1,10 +1,13 @@
 import json
+import sqlite3
 import tempfile
 import unittest
+from contextlib import closing
 from datetime import time
 from pathlib import Path
 
 from sporepath.digest_queue import (
+    collect_fragments_from_arcrift_db,
     collect_fragments_from_file,
     collect_fragments_from_files,
     is_off_peak_window,
@@ -156,6 +159,90 @@ class DigestQueueTests(unittest.TestCase):
         self.assertEqual(len(fragments), 2)
         self.assertEqual([fragment["text"] for fragment in fragments].count(duplicate), 1)
         self.assertFalse(any("remote-control" in fragment["text"] for fragment in fragments))
+
+    def test_collect_fragments_from_arcrift_db(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            arcrift_db = Path(tmp) / "ArcRift.db"
+            _create_arcrift_db(arcrift_db)
+
+            fragments = collect_fragments_from_arcrift_db(arcrift_db, min_chars=5)
+
+        self.assertEqual(len(fragments), 2)
+        self.assertEqual([fragment["role"] for fragment in fragments], ["user", "assistant"])
+        self.assertEqual(fragments[0]["source"], "arcrift:auto-session:turn[0]")
+        self.assertEqual(fragments[0]["source_file"], str(arcrift_db))
+        self.assertIn("captures the conversation", fragments[0]["text"])
+
+    def test_arcrift_queue_fragments_checkpoint_after_first_enqueue(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            arcrift_db = Path(tmp) / "ArcRift.db"
+            memory_db = Path(tmp) / "memory.sqlite"
+            _create_arcrift_db(arcrift_db)
+            store = MemoryStore(memory_db)
+
+            fragments = collect_fragments_from_arcrift_db(arcrift_db, min_chars=5)
+            first_inserted = store.enqueue_fragments(fragments)
+            second_inserted = store.enqueue_fragments(fragments)
+            stats = store.queue_stats()
+
+        self.assertEqual(first_inserted, 2)
+        self.assertEqual(second_inserted, 0)
+        self.assertEqual(stats["pending"], 2)
+
+def _create_arcrift_db(path: Path) -> None:
+    with closing(sqlite3.connect(path)) as con:
+        con.executescript(
+            """
+            CREATE TABLE sessions (
+                id TEXT PRIMARY KEY,
+                projectName TEXT NOT NULL,
+                platform TEXT,
+                summary TEXT,
+                tripleCount INTEGER DEFAULT 0,
+                topicCount INTEGER DEFAULT 0,
+                hasFullChat INTEGER DEFAULT 0,
+                createdAt TEXT,
+                updatedAt TEXT,
+                externalChatId TEXT
+            );
+            CREATE TABLE full_chats (
+                sessionId TEXT PRIMARY KEY,
+                rawText TEXT NOT NULL,
+                processedText TEXT,
+                messageCount INTEGER DEFAULT 0,
+                platform TEXT,
+                createdAt TEXT
+            );
+            """
+        )
+        con.execute(
+            "INSERT INTO sessions VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                "auto-session",
+                "Automation Trial",
+                "chatgpt",
+                "Synthetic ArcRift session",
+                0,
+                0,
+                1,
+                "2026-06-26T00:00:00Z",
+                "2026-06-26T00:01:00Z",
+                None,
+            ),
+        )
+        con.execute(
+            "INSERT INTO full_chats VALUES (?, ?, ?, ?, ?, ?)",
+            (
+                "auto-session",
+                "[User]: ArcRift captures the conversation.\n\n"
+                "[Assistant]: Sporepath should digest it into Obsidian notes automatically.",
+                None,
+                2,
+                "chatgpt",
+                "2026-06-26T00:00:00Z",
+            ),
+        )
+        con.commit()
 
 
 if __name__ == "__main__":

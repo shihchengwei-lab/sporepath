@@ -62,18 +62,20 @@ On Windows, double-click:
 Sporepath.bat
 ```
 
-This starts the ArcRift backend if needed, starts minimized Sporepath watchers,
-and opens the small local Sporepath window.
+This starts the ArcRift backend if needed, starts the local source watcher and
+off-peak digestion queue worker minimized, and opens the small local Sporepath
+window.
 
 - Local Codex/Claude/jsonl sources are watched directly. When those files
   change, Sporepath refreshes the SQLite memory, digested notes, Obsidian vault,
   and graph.
-- The background digestion queue worker is started minimized. It only processes
-  queued fragments during the configured off-peak window.
+- The background digestion queue worker is started minimized. It collects new
+  local-source and ArcRift fragments, then only digests them during the
+  configured off-peak window.
 - Web chats are intentionally not scraped in the background. After a ChatGPT or
   Claude web conversation, press ArcRift's popup **Save Chat** button. Once
-  ArcRift writes the chat into `ArcRift.db`, Sporepath imports it through the
-  same refresh pipeline.
+  ArcRift writes the chat into `ArcRift.db`, Sporepath queues it as another
+  digest source. It is not rebuilt every 20 seconds.
 
 The main window keeps the daily surface small:
 
@@ -108,7 +110,8 @@ Run-Sporepath-Queue-Worker.bat
 ```
 
 It defaults to `qwen3:1.7b`, `00:00-07:00`, batch size `5`, auto-feeds
-allowlisted local sources with `--source all`, refreshes the Obsidian vault and
+allowlisted local sources with `--source all`, includes the neighboring
+`..\ArcRift\backend\ArcRift.db` when present, refreshes the Obsidian vault and
 HTML graph after new atoms are created, and checks that Ollama and the model
 exist before starting.
 
@@ -254,6 +257,7 @@ To leave a worker running and only process the queue during off-peak hours:
 ```powershell
 python -m sporepath --db real_memory.sqlite queue-worker `
   --source all `
+  --arcrift-db "$env:USERPROFILE\Desktop\GH_repos\ArcRift\backend\ArcRift.db" `
   --off-peak 00:00-07:00 `
   --batch-size 5 `
   --interval-s 300 `
@@ -296,16 +300,18 @@ Filter to one ArcRift project or session id:
 python -m sporepath --db my_memory.sqlite import-arcrift $arc --project "My Project"
 ```
 
-To keep Sporepath updated automatically after ArcRift saves chats:
+To queue ArcRift chats for the same off-peak scout digestion path:
 
 ```powershell
-python -m sporepath --db real_memory.sqlite watch-arcrift `
+python -m sporepath --db real_memory.sqlite queue-build `
   --arcrift-db "$env:USERPROFILE\Desktop\GH_repos\ArcRift\backend\ArcRift.db" `
-  --vault "$env:USERPROFILE\Documents\Sporepath Vault" `
-  --graph real_graph.html
+  --min-chars 80
 ```
 
-On this machine, `Sporepath.bat` starts that watcher for you.
+The normal `Sporepath.bat` flow starts the queue worker for you, so saved
+ArcRift chats are picked up there. `watch-arcrift` still exists as a debug
+escape hatch for immediate rules-based import, but it is no longer part of the
+default launcher.
 
 To open a Chrome profile with the ArcRift extension already loaded:
 

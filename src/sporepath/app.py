@@ -8,7 +8,7 @@ from tkinter import BOTH, END, LEFT, RIGHT, Button, Entry, Frame, Label, Radiobu
 from .app_config import AppConfig, save_app_config
 from .automation import sync_arcrift_memory
 from .codex_adapter import build_inspiration_prompt, parse_inspiration_suggestions, run_codex_exec
-from .digest_queue import collect_fragments_from_files, process_digest_queue
+from .digest_queue import collect_fragments_from_arcrift_db, collect_fragments_from_files, process_digest_queue
 from .graph_export import export_graph_html
 from .notes import build_notes_from_atoms
 from .refresh import refresh_memory
@@ -303,6 +303,10 @@ class SporepathApp(Frame):
         if input_paths:
             fragments = collect_fragments_from_files(input_paths, min_chars=80)
             enqueued = store.enqueue_fragments(fragments)
+        arcrift_text = self.arcrift_var.get().strip()
+        if arcrift_text:
+            arcrift_fragments = collect_fragments_from_arcrift_db(arcrift_text, min_chars=80)
+            enqueued += store.enqueue_fragments(arcrift_fragments)
 
         result = process_digest_queue(store, extractor=None, limit=5)
         edges = 0

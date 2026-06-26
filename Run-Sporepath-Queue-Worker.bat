@@ -2,6 +2,9 @@
 cd /d "%~dp0"
 
 set "PYTHONPATH=src"
+set "ARCRIFT_DB=%~dp0..\ArcRift\backend\ArcRift.db"
+set SPOREPATH_ARCRIFT_ARGS=
+if exist "%ARCRIFT_DB%" set SPOREPATH_ARCRIFT_ARGS=--arcrift-db "%ARCRIFT_DB%"
 set "SPOREPATH_DB=real_memory.sqlite"
 set "SPOREPATH_VAULT=%USERPROFILE%\Documents\Sporepath Vault"
 set "SPOREPATH_GRAPH=real_graph.html"
@@ -29,6 +32,7 @@ if errorlevel 1 (
 
 python -m sporepath --db "%SPOREPATH_DB%" queue-worker ^
   --source all ^
+  %SPOREPATH_ARCRIFT_ARGS% ^
   --min-chars "%SPOREPATH_QUEUE_MIN_CHARS%" ^
   --dedupe-threshold "%SPOREPATH_QUEUE_DEDUPE_THRESHOLD%" ^
   --off-peak "%SPOREPATH_QUEUE_OFF_PEAK%" ^

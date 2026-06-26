@@ -9,7 +9,8 @@ set "SPOREPATH_DB=real_memory.sqlite"
 set "SPOREPATH_VAULT=%USERPROFILE%\Documents\Sporepath Vault"
 set "SPOREPATH_GRAPH=real_graph.html"
 
-start "Sporepath ArcRift Watcher" /min "%~dp0Run-Sporepath-Watcher.bat"
+rem ArcRift saved web chats are queued by Run-Sporepath-Queue-Worker.bat.
+rem Run-Sporepath-Watcher.bat remains available for manual immediate sync.
 start "Sporepath Sources Watcher" /min "%~dp0Run-Sporepath-Sources-Watcher.bat"
 start "Sporepath Queue Worker" /min "%~dp0Run-Sporepath-Queue-Worker.bat"
 

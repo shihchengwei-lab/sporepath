@@ -1,8 +1,9 @@
 import io
 import json
+import sqlite3
 import tempfile
 import unittest
-from contextlib import redirect_stdout
+from contextlib import closing, redirect_stdout
 from pathlib import Path
 
 from sporepath.cli import main
@@ -348,6 +349,67 @@ class CliTests(unittest.TestCase):
         self.assertIn("notes=", out.getvalue())
         self.assertIn("vault_notes=", out.getvalue())
 
+    def test_queue_build_can_feed_arcrift_db(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            db = Path(tmp) / "memory.sqlite"
+            arcrift_db = Path(tmp) / "ArcRift.db"
+            _create_arcrift_db(arcrift_db)
+
+            out = io.StringIO()
+            with redirect_stdout(out):
+                code = main(
+                    [
+                        "--db",
+                        str(db),
+                        "queue-build",
+                        "--arcrift-db",
+                        str(arcrift_db),
+                        "--min-chars",
+                        "5",
+                    ]
+                )
+            store = MemoryStore(db)
+            stats = store.queue_stats()
+
+        self.assertEqual(code, 0)
+        self.assertIn("Enqueued 2 fragments", out.getvalue())
+        self.assertEqual(stats["pending"], 2)
+
+    def test_queue_worker_can_auto_feed_arcrift_db(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            db = Path(tmp) / "memory.sqlite"
+            arcrift_db = Path(tmp) / "ArcRift.db"
+            _create_arcrift_db(arcrift_db)
+
+            out = io.StringIO()
+            with redirect_stdout(out):
+                code = main(
+                    [
+                        "--db",
+                        str(db),
+                        "queue-worker",
+                        "--once",
+                        "--run-now",
+                        "--arcrift-db",
+                        str(arcrift_db),
+                        "--min-chars",
+                        "5",
+                        "--extractor",
+                        "rules",
+                        "--batch-size",
+                        "1",
+                    ]
+                )
+            store = MemoryStore(db)
+            stats = store.queue_stats()
+            atoms = store.list_atoms()
+
+        self.assertEqual(code, 0)
+        self.assertIn("enqueued=2", out.getvalue())
+        self.assertEqual(len(atoms), 1)
+        self.assertEqual(stats["done"], 1)
+        self.assertEqual(stats["pending"], 1)
+
     def test_queue_errors_and_retry_commands(self):
         with tempfile.TemporaryDirectory() as tmp:
             db = Path(tmp) / "memory.sqlite"
@@ -605,6 +667,62 @@ class CliTests(unittest.TestCase):
         self.assertEqual(code, 0)
         self.assertIn(f"run={latest_run_id}", out.getvalue())
         self.assertEqual({edges[0].from_id, edges[0].to_id}, {"focus", "latent"})
+
+
+def _create_arcrift_db(path: Path) -> None:
+    with closing(sqlite3.connect(path)) as con:
+        con.executescript(
+            """
+            CREATE TABLE sessions (
+                id TEXT PRIMARY KEY,
+                projectName TEXT NOT NULL,
+                platform TEXT,
+                summary TEXT,
+                tripleCount INTEGER DEFAULT 0,
+                topicCount INTEGER DEFAULT 0,
+                hasFullChat INTEGER DEFAULT 0,
+                createdAt TEXT,
+                updatedAt TEXT,
+                externalChatId TEXT
+            );
+            CREATE TABLE full_chats (
+                sessionId TEXT PRIMARY KEY,
+                rawText TEXT NOT NULL,
+                processedText TEXT,
+                messageCount INTEGER DEFAULT 0,
+                platform TEXT,
+                createdAt TEXT
+            );
+            """
+        )
+        con.execute(
+            "INSERT INTO sessions VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                "cli-session",
+                "CLI Trial",
+                "chatgpt",
+                "Synthetic CLI ArcRift session",
+                0,
+                0,
+                1,
+                "2026-06-26T00:00:00Z",
+                "2026-06-26T00:01:00Z",
+                None,
+            ),
+        )
+        con.execute(
+            "INSERT INTO full_chats VALUES (?, ?, ?, ?, ?, ?)",
+            (
+                "cli-session",
+                "[User]: ArcRift saved this web chat for the digest queue.\n\n"
+                "[Assistant]: The queue worker should process it later.",
+                None,
+                2,
+                "chatgpt",
+                "2026-06-26T00:00:00Z",
+            ),
+        )
+        con.commit()
 
 
 if __name__ == "__main__":

@@ -47,6 +47,7 @@ class LauncherTests(unittest.TestCase):
         text = launcher.read_text(encoding="utf-8")
 
         self.assertIn("Run-Sporepath-Sources-Watcher.bat", text)
+        self.assertNotIn('start "Sporepath ArcRift Watcher"', text)
 
     def test_queue_worker_launcher_runs_off_peak_scout(self):
         launcher = ROOT / "Run-Sporepath-Queue-Worker.bat"
@@ -54,6 +55,8 @@ class LauncherTests(unittest.TestCase):
 
         self.assertIn("queue-worker", text)
         self.assertIn("--source all", text)
+        self.assertIn("ARCRIFT_DB", text)
+        self.assertIn("--arcrift-db", text)
         self.assertIn("--vault", text)
         self.assertIn("--graph", text)
         self.assertIn("--dedupe-threshold", text)

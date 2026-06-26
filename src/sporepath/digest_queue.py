@@ -6,6 +6,7 @@ from datetime import time
 from pathlib import Path
 from typing import Iterable
 
+from .arcrift_import import _read_full_chats, parse_arcrift_raw_text
 from .extractors import Extractor
 from .fragment_filter import DEFAULT_DEDUPE_THRESHOLD, FragmentFilter
 from .ingest import (
@@ -69,6 +70,53 @@ def collect_fragments_from_file(
                 "timestamp": turn.get("timestamp"),
             }
         )
+    return fragments
+
+
+def collect_fragments_from_arcrift_db(
+    path: str | Path,
+    *,
+    min_chars: int = 12,
+    max_turns: int | None = None,
+    project: str | None = None,
+    dedupe: bool = True,
+    conservative: bool = True,
+    dedupe_threshold: float = DEFAULT_DEDUPE_THRESHOLD,
+    fragment_filter: FragmentFilter | None = None,
+) -> list[dict[str, object]]:
+    db_path = Path(path)
+    if not db_path.exists():
+        raise FileNotFoundError(f"ArcRift database not found: {db_path}")
+
+    active_filter = fragment_filter or FragmentFilter(
+        dedupe=dedupe,
+        conservative=conservative,
+        threshold=dedupe_threshold,
+    )
+    fragments: list[dict[str, object]] = []
+    turns_read = 0
+    for chat in _read_full_chats(db_path, project=project):
+        for turn_index, turn in enumerate(parse_arcrift_raw_text(str(chat["rawText"] or ""))):
+            if max_turns is not None and turns_read >= max_turns:
+                return fragments
+            turns_read += 1
+            text = _clean_text(turn["text"])
+            if _is_tool_noise(text) or len(text) < min_chars:
+                continue
+            if active_filter is not None and not active_filter.keep(text).keep:
+                continue
+            source = f"arcrift:{chat['sessionId']}:turn[{turn_index}]"
+            fragment_id = hashlib.sha1(f"{source}\n{text}".encode("utf-8")).hexdigest()[:16]
+            fragments.append(
+                {
+                    "id": fragment_id,
+                    "source_file": str(db_path),
+                    "source": source,
+                    "role": turn.get("role", "unknown"),
+                    "text": text,
+                    "timestamp": chat.get("timestamp"),
+                }
+            )
     return fragments
 
 

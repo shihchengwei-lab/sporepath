@@ -39,3 +39,12 @@ def build_source_snapshot(paths: Iterable[SourcePath]) -> SourceSnapshot:
 def source_snapshot_changed(previous: SourceSnapshot, paths: Iterable[SourcePath]) -> bool:
     current = build_source_snapshot(paths)
     return current.files != previous.files
+
+
+def sqlite_watch_paths(path: str | Path) -> list[Path]:
+    db_path = Path(path)
+    return [
+        db_path,
+        Path(str(db_path) + "-wal"),
+        Path(str(db_path) + "-shm"),
+    ]

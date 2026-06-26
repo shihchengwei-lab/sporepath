@@ -13,9 +13,14 @@ from pathlib import Path
 
 from .arcrift_import import extract_atoms_from_arcrift_db
 from .app_config import default_app_config, load_app_config
-from .automation import sync_arcrift_memory
+from .automation import default_arcrift_db_path, sync_arcrift_memory
 from .codex_adapter import build_inspiration_prompt, codex_command, parse_inspiration_suggestions, run_codex_exec
-from .digest_queue import collect_fragments_from_files, is_off_peak_window, process_digest_queue
+from .digest_queue import (
+    collect_fragments_from_arcrift_db,
+    collect_fragments_from_files,
+    is_off_peak_window,
+    process_digest_queue,
+)
 from .evaluation import build_extraction_eval, clean_extraction_eval, score_eval_sheet
 from .extractors import OllamaExtractor
 from .graph_export import export_graph_html
@@ -23,7 +28,7 @@ from .ingest import extract_atoms_from_file
 from .notes import build_notes_from_atoms
 from .refresh import refresh_memory
 from .source_discovery import discover_sources, expand_source_files, sources_for_labels
-from .source_watch import build_source_snapshot, source_snapshot_changed
+from .source_watch import SourceSnapshot, build_source_snapshot, source_snapshot_changed, sqlite_watch_paths
 from .store import MemoryStore
 from .validation import (
     validate_inspire,
@@ -36,6 +41,16 @@ from .vault_export import export_obsidian_vault, sync_obsidian_vault
 
 
 DEFAULT_DB = Path("memory.sqlite")
+
+
+def should_sync_arcrift_tick(
+    previous: SourceSnapshot | None,
+    arcrift_db_path: str | Path,
+    *,
+    force: bool = False,
+) -> tuple[bool, SourceSnapshot]:
+    current = SourceSnapshot.from_paths(sqlite_watch_paths(arcrift_db_path))
+    return force or previous is None or current != previous, current
 
 
 def _build_extractor(args):
@@ -53,16 +68,30 @@ def _build_extractor(args):
 def _enqueue_queue_inputs(store: MemoryStore, args) -> int:
     source_candidates = sources_for_labels(args.source, home=args.home) if args.source else []
     input_paths = [*args.input, *source_candidates]
-    if not input_paths:
-        return 0
-    files = expand_source_files(input_paths)
-    fragments = collect_fragments_from_files(
-        files,
-        min_chars=args.min_chars,
-        max_turns=args.max_turns,
-        dedupe=args.dedupe,
-        dedupe_threshold=args.dedupe_threshold,
-    )
+    fragments = []
+    if input_paths:
+        files = expand_source_files(input_paths)
+        fragments.extend(
+            collect_fragments_from_files(
+                files,
+                min_chars=args.min_chars,
+                max_turns=args.max_turns,
+                dedupe=args.dedupe,
+                dedupe_threshold=args.dedupe_threshold,
+            )
+        )
+    arcrift_db = getattr(args, "arcrift_db", None)
+    if arcrift_db:
+        fragments.extend(
+            collect_fragments_from_arcrift_db(
+                arcrift_db,
+                min_chars=args.min_chars,
+                max_turns=args.max_turns,
+                project=getattr(args, "arcrift_project", None),
+                dedupe=args.dedupe,
+                dedupe_threshold=args.dedupe_threshold,
+            )
+        )
     return store.enqueue_fragments(fragments)
 
 
@@ -192,6 +221,8 @@ def main(argv: list[str] | None = None) -> int:
     queue_build = sub.add_parser("queue-build", help="Collect raw chat fragments into the background digestion queue.")
     queue_build.add_argument("--input", action="append", default=[], help="JSON/JSONL file or directory to queue.")
     queue_build.add_argument("--source", action="append", default=[], help="Auto-detected source family or label.")
+    queue_build.add_argument("--arcrift-db", default=None, help="ArcRift SQLite DB to queue as a web-chat source.")
+    queue_build.add_argument("--arcrift-project", default=None, help="Optional ArcRift project name or session id to queue.")
     queue_build.add_argument("--home", default=None, help="Override home directory for source detection.")
     queue_build.add_argument("--min-chars", type=int, default=12)
     queue_build.add_argument("--max-turns", type=int, default=None)
@@ -216,6 +247,8 @@ def main(argv: list[str] | None = None) -> int:
     queue_worker = sub.add_parser("queue-worker", help="Continuously process the digestion queue during an off-peak window.")
     queue_worker.add_argument("--input", action="append", default=[], help="JSON/JSONL file or directory to collect into the queue each tick.")
     queue_worker.add_argument("--source", action="append", default=[], help="Auto-detected source family or label to collect into the queue each tick.")
+    queue_worker.add_argument("--arcrift-db", default=None, help="ArcRift SQLite DB to collect into the queue each tick.")
+    queue_worker.add_argument("--arcrift-project", default=None, help="Optional ArcRift project name or session id to collect.")
     queue_worker.add_argument("--home", default=None, help="Override home directory for source detection.")
     queue_worker.add_argument("--off-peak", default="00:00-07:00", help="Allowed processing window, e.g. 00:00-07:00.")
     queue_worker.add_argument("--batch-size", type=int, default=5)
@@ -404,30 +437,44 @@ def main(argv: list[str] | None = None) -> int:
         config = default_app_config(args.db)
         vault_path = args.vault if args.vault is not None else str(config.vault_path)
         graph_path = args.graph if args.graph is not None else str(config.graph_path)
+        arcrift_snapshot: SourceSnapshot | None = None
+        arcrift_watch_path = Path(args.arcrift_db) if args.arcrift_db else default_arcrift_db_path()
         while True:
-            try:
-                result = sync_arcrift_memory(
-                    db_path=args.db,
-                    arcrift_db_path=args.arcrift_db,
-                    vault_path=vault_path,
-                    graph_path=graph_path,
-                    min_chars=args.min_chars,
-                    max_turns=args.max_turns,
-                    min_note_atoms=args.min_note_atoms,
-                    max_note_points=args.max_note_points,
-                    project=args.project,
+            should_sync = True
+            if args.command == "watch-arcrift" and arcrift_watch_path is not None:
+                should_sync, arcrift_snapshot = should_sync_arcrift_tick(
+                    arcrift_snapshot,
+                    arcrift_watch_path,
+                    force=args.once,
                 )
-            except (FileNotFoundError, ValueError, sqlite3.DatabaseError) as exc:
-                print(str(exc), file=sys.stderr)
-                return 2
-            print(
-                "ArcRift sync complete: "
-                f"imported={result.atoms_imported} atoms={result.atoms_after} "
-                f"edges={result.edges_rebuilt} notes={result.notes_built} "
-                f"vault_notes={result.vault_notes_exported}"
-            )
-            if result.graph_path:
-                print(f"Graph: {result.graph_path.resolve()}")
+            if should_sync:
+                try:
+                    result = sync_arcrift_memory(
+                        db_path=args.db,
+                        arcrift_db_path=args.arcrift_db,
+                        vault_path=vault_path,
+                        graph_path=graph_path,
+                        min_chars=args.min_chars,
+                        max_turns=args.max_turns,
+                        min_note_atoms=args.min_note_atoms,
+                        max_note_points=args.max_note_points,
+                        project=args.project,
+                    )
+                except (FileNotFoundError, ValueError, sqlite3.DatabaseError) as exc:
+                    print(str(exc), file=sys.stderr)
+                    return 2
+                arcrift_watch_path = result.arcrift_db_path
+                arcrift_snapshot = SourceSnapshot.from_paths(sqlite_watch_paths(result.arcrift_db_path))
+                print(
+                    "ArcRift sync complete: "
+                    f"imported={result.atoms_imported} atoms={result.atoms_after} "
+                    f"edges={result.edges_rebuilt} notes={result.notes_built} "
+                    f"vault_notes={result.vault_notes_exported}"
+                )
+                if result.graph_path:
+                    print(f"Graph: {result.graph_path.resolve()}")
+            else:
+                print("ArcRift sync skipped: unchanged")
             if args.command == "sync-arcrift" or args.once:
                 return 0
             sys.stdout.flush()
@@ -565,20 +612,10 @@ def main(argv: list[str] | None = None) -> int:
             time.sleep(max(1.0, args.interval_s))
 
     if args.command == "queue-build":
-        source_candidates = sources_for_labels(args.source, home=args.home) if args.source else []
-        input_paths = [*args.input, *source_candidates]
-        files = expand_source_files(input_paths)
-        if not files:
-            print("No queue input. Use --input <path> or --source codex/claude/all.", file=sys.stderr)
+        if not args.input and not args.source and not args.arcrift_db:
+            print("No queue input. Use --input <path>, --source codex/claude/all, or --arcrift-db <path>.", file=sys.stderr)
             return 2
-        fragments = collect_fragments_from_files(
-            files,
-            min_chars=args.min_chars,
-            max_turns=args.max_turns,
-            dedupe=args.dedupe,
-            dedupe_threshold=args.dedupe_threshold,
-        )
-        inserted = store.enqueue_fragments(fragments)
+        inserted = _enqueue_queue_inputs(store, args)
         stats = store.queue_stats()
         print(
             f"Enqueued {inserted} fragments "
