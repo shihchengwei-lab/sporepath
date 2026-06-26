@@ -213,6 +213,85 @@ class MemoryStore:
             )
             con.commit()
 
+    def enqueue_fragments(self, fragments: Iterable[dict[str, object]]) -> int:
+        rows = []
+        now = _now()
+        for fragment in fragments:
+            rows.append(
+                (
+                    str(fragment["id"]),
+                    str(fragment["source_file"]),
+                    str(fragment["source"]),
+                    str(fragment.get("role", "unknown")),
+                    str(fragment["text"]),
+                    fragment.get("timestamp"),
+                    "pending",
+                    0,
+                    "",
+                    None,
+                    now,
+                    now,
+                )
+            )
+        if not rows:
+            return 0
+        with closing(self._connect()) as con:
+            before = con.total_changes
+            con.executemany(
+                """
+                INSERT OR IGNORE INTO digest_queue (
+                    id, source_file, source, role, text, timestamp,
+                    status, attempts, last_error, atom_id, created_at, updated_at
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                rows,
+            )
+            inserted = con.total_changes - before
+            con.commit()
+        return inserted
+
+    def queue_stats(self) -> dict[str, int]:
+        with closing(self._connect()) as con:
+            rows = con.execute(
+                "SELECT status, COUNT(*) AS count FROM digest_queue GROUP BY status"
+            ).fetchall()
+        return {row["status"]: row["count"] for row in rows}
+
+    def next_queue_fragments(self, *, limit: int = 10) -> list[dict[str, object]]:
+        with closing(self._connect()) as con:
+            rows = con.execute(
+                """
+                SELECT id, source_file, source, role, text, timestamp, attempts
+                FROM digest_queue
+                WHERE status = 'pending'
+                ORDER BY created_at ASC, id ASC
+                LIMIT ?
+                """,
+                (limit,),
+            ).fetchall()
+        return [
+            {
+                "id": row["id"],
+                "source_file": row["source_file"],
+                "source": row["source"],
+                "role": row["role"],
+                "text": row["text"],
+                "timestamp": row["timestamp"],
+                "attempts": row["attempts"],
+            }
+            for row in rows
+        ]
+
+    def mark_queue_done(self, fragment_id: str, atom_id: str) -> None:
+        self._mark_queue_status(fragment_id, "done", atom_id=atom_id)
+
+    def mark_queue_skipped(self, fragment_id: str, reason: str = "") -> None:
+        self._mark_queue_status(fragment_id, "skipped", error=reason)
+
+    def mark_queue_error(self, fragment_id: str, error: str) -> None:
+        self._mark_queue_status(fragment_id, "error", error=error)
+
     def record_inspire_run(
         self,
         *,
@@ -582,6 +661,24 @@ class MemoryStore:
                 )
                 """
             )
+            con.execute(
+                """
+                CREATE TABLE IF NOT EXISTS digest_queue (
+                    id TEXT PRIMARY KEY,
+                    source_file TEXT NOT NULL,
+                    source TEXT NOT NULL,
+                    role TEXT NOT NULL,
+                    text TEXT NOT NULL,
+                    timestamp TEXT,
+                    status TEXT NOT NULL,
+                    attempts INTEGER NOT NULL DEFAULT 0,
+                    last_error TEXT NOT NULL DEFAULT '',
+                    atom_id TEXT,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                )
+                """
+            )
             con.commit()
 
     def _ensure_column(self, con: sqlite3.Connection, table: str, column: str, definition: str) -> None:
@@ -654,6 +751,29 @@ class MemoryStore:
             activation=row["activation"],
             metadata=json.loads(row["metadata"]),
         )
+
+    def _mark_queue_status(
+        self,
+        fragment_id: str,
+        status: str,
+        *,
+        atom_id: str | None = None,
+        error: str = "",
+    ) -> None:
+        with closing(self._connect()) as con:
+            con.execute(
+                """
+                UPDATE digest_queue
+                SET status = ?,
+                    attempts = attempts + 1,
+                    last_error = ?,
+                    atom_id = COALESCE(?, atom_id),
+                    updated_at = ?
+                WHERE id = ?
+                """,
+                (status, error, atom_id, _now(), fragment_id),
+            )
+            con.commit()
 
     def _reliable_latent_score(self, question: str, atom: ThoughtAtom) -> float:
         question_folded = question.casefold()

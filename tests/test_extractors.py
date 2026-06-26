@@ -3,7 +3,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from sporepath.extractors import ExtractSignal, OllamaExtractor, parse_signal_json
+from sporepath.extractors import ExtractSignal, OllamaExtractor, build_extraction_prompt, parse_signal_json
 from sporepath.ingest import extract_atoms_from_file
 
 
@@ -30,6 +30,7 @@ class ExtractorTests(unittest.TestCase):
     def test_ollama_extractor_uses_transport_response(self):
         def fake_transport(_payload):
             self.assertFalse(_payload["think"])
+            self.assertEqual(_payload["options"]["num_predict"], 320)
             return json.dumps(
                 {
                     "keep": True,
@@ -46,7 +47,7 @@ class ExtractorTests(unittest.TestCase):
                 ensure_ascii=False,
             )
 
-        extractor = OllamaExtractor(model="qwen3:1.7b", transport=fake_transport)
+        extractor = OllamaExtractor(model="qwen3:1.7b", num_predict=320, transport=fake_transport)
         signal = extractor.extract("太文言，產品介紹不是寫成給玩家的話嗎？")
 
         self.assertEqual(signal.kind, "taste")
@@ -82,6 +83,42 @@ class ExtractorTests(unittest.TestCase):
         self.assertEqual(signal.signals, ["restore flow", "ownership state"])
         self.assertEqual(signal.noise, ["我快瘋了"])
         self.assertEqual(signal.handoff, "購買 restore 後要檢查本地 ownership 狀態是否回寫。")
+
+    def test_parse_signal_json_filters_placeholder_noise(self):
+        raw = json.dumps(
+            {
+                "keep": True,
+                "route": "idea",
+                "kind": "idea",
+                "summary": "模型透明度與安全護欄",
+                "signals": ["透明度", "安全護欄"],
+                "noise": ["該丟掉的字：該丟掉的字", "寒暄、工具噪音、一次性進度", "無", "我快瘋了"],
+                "handoff": "評估模型公司宣傳與安全護欄落差時可用。",
+                "tags": ["ai-safety", "transparency"],
+                "confidence": 0.8,
+                "reason": "可重用判斷",
+            },
+            ensure_ascii=False,
+        )
+
+        signal = parse_signal_json(raw)
+
+        self.assertEqual(signal.noise, ["我快瘋了"])
+
+    def test_extraction_prompt_keeps_fragment_explicit_for_small_models(self):
+        prompt = build_extraction_prompt(
+            "我在做一個第二大腦工具，想測試小模型能不能整理聊天。",
+            role="user",
+        )
+
+        self.assertIn("fragment_text:", prompt)
+        self.assertIn("我在做一個第二大腦工具", prompt)
+        self.assertIn("summary 必須提到具體主題", prompt)
+        self.assertIn("不要寫「未明確」", prompt)
+        self.assertIn("noise 只能列 fragment_text 原文裡", prompt)
+        self.assertIn("handoff 必須說明未來哪種情境會用到", prompt)
+        self.assertLess(prompt.find("fragment_text:"), prompt.find("JSON 欄位"))
+        self.assertNotIn("<<<", prompt)
 
     def test_ingest_can_use_custom_extractor(self):
         class FakeExtractor:

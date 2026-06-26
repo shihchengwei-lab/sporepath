@@ -70,12 +70,14 @@ class OllamaExtractor:
         model: str = "qwen3:1.7b",
         host: str = "http://127.0.0.1:11434",
         timeout_s: int = 60,
+        num_predict: int = 220,
         min_confidence: float = 0.55,
         transport: Callable[[dict], str] | None = None,
     ):
         self.model = model
         self.host = host.rstrip("/")
         self.timeout_s = timeout_s
+        self.num_predict = num_predict
         self.min_confidence = min_confidence
         self.transport = transport or self._ollama_chat
 
@@ -87,15 +89,12 @@ class OllamaExtractor:
             "options": {
                 "temperature": 0.1,
                 "top_p": 0.8,
-                "num_predict": 220,
+                "num_predict": self.num_predict,
             },
             "messages": [
                 {
                     "role": "system",
-                    "content": (
-                        "You extract reusable thought atoms from AI chat logs. "
-                        "Return only one compact JSON object. No markdown."
-                    ),
+                    "content": "你是聊天記憶 scout。只輸出一個 JSON object。",
                 },
                 {
                     "role": "user",
@@ -143,36 +142,25 @@ class OllamaExtractor:
 
 
 def build_extraction_prompt(text: str, *, role: str) -> str:
-    return f"""你是聊天記憶哨兵，不是筆記編輯器。只輸出 JSON，不要 markdown，不要解釋。
-
-任務：判斷下面片段是否值得成為「候選記憶」，並留下足夠線索給後續 digest / inspire 使用。
-
-保留條件：它包含未來可重用的想法、問題、決策、偏好、判斷框架、反對點、類比，或可能重複踩到的技術坑。
-丟棄條件：寒暄、工具噪音、暫時性輸出、空泛摘要、沒有可重用判斷。
-
-route 只能選一個：
-debug, product, preference, idea, decision, research, writing, ops, other
-
-kind 只能選一個：
-idea, objection, decision, question, analogy, preference, taste, framework, bug_memory, note
-
-輸出格式必須是單一 JSON object，欄位如下：
-- keep: boolean
-- route: string，大致路由，給後續系統決定交給哪種 digest / inspire
-- kind: string
-- summary: string，粗略記憶，不要求漂亮，不要只複製全文
-- signals: array of 1 to 5 reusable signals，抓可重用訊號，不要寫完整句
-- noise: array of strings，列出應丟掉的寒暄、情緒、工具或一次性內容；沒有就 []
-- handoff: string，給後續雲端模型思考的短線索，重點是「這可能在什麼情境有用」
-- tags: array of 2 to 6 short strings，不可使用 placeholder
-- confidence: number from 0 to 1
-- reason: string
-
+    return f"""fragment_text: {json.dumps(text, ensure_ascii=False)}
 role: {role}
-fragment:
-<<<
-{text}
->>>
+
+只輸出一個 JSON object，不要 markdown。
+判斷 fragment_text 是否值得留下給未來 digest / inspire 使用。
+
+keep=true：可重用想法、問題、決策、偏好、判斷框架、反對點、類比、技術坑。
+keep=false：寒暄、工具噪音、一次性進度、空泛 recap、沒有未來用途。
+
+route 選一個：debug, product, preference, idea, decision, research, writing, ops, other
+kind 選一個：idea, objection, decision, question, analogy, preference, taste, framework, bug_memory, note
+
+summary 必須提到具體主題，盡量使用 fragment_text 裡的名詞。
+不要寫「未明確」、「需進一步分析」、「可能包含」這類逃避句。
+noise 只能列 fragment_text 原文裡真的該丟掉的字；沒有就 []，不要抄規則。
+handoff 必須說明未來哪種情境會用到這段記憶；不要寫 False、digest、inspire。
+
+JSON 欄位：
+keep, route, kind, summary, signals, noise, handoff, tags, confidence, reason
 """
 
 
@@ -185,7 +173,7 @@ def parse_signal_json(raw: str) -> ExtractSignal:
     route = _normalize_route(data.get("route"), kind)
     summary = str(data.get("summary", "")).strip()
     signals = _string_list(data.get("signals", []), limit=5)
-    noise = _string_list(data.get("noise", []), limit=8)
+    noise = _filter_placeholder_noise(_string_list(data.get("noise", []), limit=8))
     handoff = str(data.get("handoff", "")).strip()
     tags_raw = data.get("tags", [])
     if isinstance(tags_raw, str):
@@ -254,3 +242,25 @@ def _string_list(raw, *, limit: int) -> list[str]:
     else:
         items = []
     return [item for item in items if item][:limit]
+
+
+def _filter_placeholder_noise(items: list[str]) -> list[str]:
+    placeholders = {
+        "無",
+        "无",
+        "none",
+        "null",
+        "n/a",
+        "沒有",
+        "没有",
+        "寒暄、工具噪音、一次性進度",
+    }
+    result = []
+    for item in items:
+        folded = item.strip().casefold()
+        if folded in placeholders:
+            continue
+        if "該丟掉的字" in item or "该丢掉的字" in item:
+            continue
+        result.append(item)
+    return result

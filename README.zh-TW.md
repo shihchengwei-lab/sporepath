@@ -189,6 +189,34 @@ Launch-ArcRift-Logged-In-Chrome.bat
 python -m sporepath --db qwen_trial.sqlite show <atom-id>
 ```
 
+## 背景消化 Queue
+
+慢 scout 不需要在你工作時即時跑。可以先把新聊天片段放進 queue，等離峰或電腦閒置時再慢慢整理：
+
+```powershell
+python -m sporepath --db real_memory.sqlite queue-build --source all --min-chars 80
+python -m sporepath --db real_memory.sqlite queue-stats
+```
+
+先用 rules baseline 處理一小批：
+
+```powershell
+python -m sporepath --db real_memory.sqlite digest-queue --extractor rules --limit 25
+```
+
+用比較慢的本地 scout，例如 `qwen3.5:4b`：
+
+```powershell
+python -m sporepath --db real_memory.sqlite digest-queue `
+  --extractor ollama `
+  --model qwen3.5:4b `
+  --ollama-timeout-s 180 `
+  --ollama-num-predict 320 `
+  --limit 10
+```
+
+每個片段都會 checkpoint 成 `done`、`skipped` 或 `error`。中途停掉也沒關係，下次可以接著處理還沒完成的 backlog。
+
 ## 代謝後的筆記
 
 完整聊天紀錄太長，不適合回看。Thought atoms 很適合拿來計分和連線，但太碎，不適合直接閱讀。Digested notes 是中間層：

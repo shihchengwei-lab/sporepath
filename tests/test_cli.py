@@ -115,6 +115,47 @@ class CliTests(unittest.TestCase):
         self.assertEqual(len(atoms), 1)
         self.assertIn("第一個", atoms[0].text)
 
+    def test_eval_extract_help_exposes_ollama_budget_args(self):
+        out = io.StringIO()
+
+        with self.assertRaises(SystemExit) as raised, redirect_stdout(out):
+            main(["eval-extract", "--help"])
+
+        self.assertEqual(raised.exception.code, 0)
+        self.assertIn("--ollama-timeout-s", out.getvalue())
+        self.assertIn("--ollama-num-predict", out.getvalue())
+
+    def test_queue_build_and_digest_queue_process_limit(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            db = Path(tmp) / "memory.sqlite"
+            chat = Path(tmp) / "chat.jsonl"
+            chat.write_text(
+                "\n".join(
+                    [
+                        json.dumps({"role": "user", "content": "第一個 queue idea 要離峰整理。"}, ensure_ascii=False),
+                        json.dumps({"role": "user", "content": "第二個 queue idea 先留在 backlog。"}, ensure_ascii=False),
+                    ]
+                ),
+                encoding="utf-8",
+            )
+
+            out = io.StringIO()
+            with redirect_stdout(out):
+                build_code = main(["--db", str(db), "queue-build", "--input", str(chat), "--min-chars", "5"])
+            with redirect_stdout(out):
+                digest_code = main(["--db", str(db), "digest-queue", "--extractor", "rules", "--limit", "1"])
+            store = MemoryStore(db)
+            stats = store.queue_stats()
+            atoms = store.list_atoms()
+
+        self.assertEqual(build_code, 0)
+        self.assertEqual(digest_code, 0)
+        self.assertIn("Enqueued 2 fragments", out.getvalue())
+        self.assertIn("processed=1", out.getvalue())
+        self.assertEqual(len(atoms), 1)
+        self.assertEqual(stats["done"], 1)
+        self.assertEqual(stats["pending"], 1)
+
     def test_inspire_feedback_command_strengthens_selected_atoms(self):
         with tempfile.TemporaryDirectory() as tmp:
             db = Path(tmp) / "memory.sqlite"

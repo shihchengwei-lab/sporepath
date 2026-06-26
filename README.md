@@ -178,6 +178,36 @@ why it kept an atom:
 python -m sporepath --db qwen_trial.sqlite show <atom-id>
 ```
 
+## Background Digestion Queue
+
+Slow scout models do not need to run while you are working. Queue new chat
+fragments first, then digest them later during idle/off-peak time:
+
+```powershell
+python -m sporepath --db real_memory.sqlite queue-build --source all --min-chars 80
+python -m sporepath --db real_memory.sqlite queue-stats
+```
+
+Process a small batch with the rules baseline:
+
+```powershell
+python -m sporepath --db real_memory.sqlite digest-queue --extractor rules --limit 25
+```
+
+Process a slower local scout such as `qwen3.5:4b`:
+
+```powershell
+python -m sporepath --db real_memory.sqlite digest-queue `
+  --extractor ollama `
+  --model qwen3.5:4b `
+  --ollama-timeout-s 180 `
+  --ollama-num-predict 320 `
+  --limit 10
+```
+
+Each fragment is checkpointed as `done`, `skipped`, or `error`, so an interrupted
+run can continue later without reprocessing finished items.
+
 ## ArcRift Companion Mode
 
 ArcRift already does a better job at capture, RAG, MCP, graph dashboard, and

@@ -14,13 +14,14 @@ from .arcrift_import import extract_atoms_from_arcrift_db
 from .app_config import default_app_config
 from .automation import sync_arcrift_memory
 from .codex_adapter import build_inspiration_prompt, codex_command, parse_inspiration_suggestions, run_codex_exec
+from .digest_queue import collect_fragments_from_files, process_digest_queue
 from .evaluation import build_extraction_eval, score_eval_sheet
 from .extractors import OllamaExtractor
 from .graph_export import export_graph_html
 from .ingest import extract_atoms_from_file
 from .notes import build_notes_from_atoms
 from .refresh import refresh_memory
-from .source_discovery import discover_sources, sources_for_labels
+from .source_discovery import discover_sources, expand_source_files, sources_for_labels
 from .source_watch import build_source_snapshot, source_snapshot_changed
 from .store import MemoryStore
 from .vault_export import export_obsidian_vault, sync_obsidian_vault
@@ -43,6 +44,8 @@ def main(argv: list[str] | None = None) -> int:
     ingest.add_argument("--extractor", choices=["rules", "ollama"], default="rules")
     ingest.add_argument("--model", default="qwen3:1.7b", help="Local Ollama model for --extractor ollama.")
     ingest.add_argument("--ollama-host", default="http://127.0.0.1:11434")
+    ingest.add_argument("--ollama-timeout-s", type=int, default=60)
+    ingest.add_argument("--ollama-num-predict", type=int, default=220)
     ingest.add_argument("--min-confidence", type=float, default=0.55)
 
     import_arcrift = sub.add_parser("import-arcrift", help="Import full chats from an ArcRift SQLite database.")
@@ -53,6 +56,8 @@ def main(argv: list[str] | None = None) -> int:
     import_arcrift.add_argument("--extractor", choices=["rules", "ollama"], default="rules")
     import_arcrift.add_argument("--model", default="qwen3:1.7b", help="Local Ollama model for --extractor ollama.")
     import_arcrift.add_argument("--ollama-host", default="http://127.0.0.1:11434")
+    import_arcrift.add_argument("--ollama-timeout-s", type=int, default=60)
+    import_arcrift.add_argument("--ollama-num-predict", type=int, default=220)
     import_arcrift.add_argument("--min-confidence", type=float, default=0.55)
 
     sync_arcrift = sub.add_parser("sync-arcrift", help="Import ArcRift DB, rebuild notes, export vault, and refresh graph once.")
@@ -124,6 +129,25 @@ def main(argv: list[str] | None = None) -> int:
     watch_sources.add_argument("--min-note-atoms", type=int, default=2)
     watch_sources.add_argument("--max-note-points", type=int, default=5)
 
+    queue_build = sub.add_parser("queue-build", help="Collect raw chat fragments into the background digestion queue.")
+    queue_build.add_argument("--input", action="append", default=[], help="JSON/JSONL file or directory to queue.")
+    queue_build.add_argument("--source", action="append", default=[], help="Auto-detected source family or label.")
+    queue_build.add_argument("--home", default=None, help="Override home directory for source detection.")
+    queue_build.add_argument("--min-chars", type=int, default=12)
+    queue_build.add_argument("--max-turns", type=int, default=None)
+
+    digest_queue = sub.add_parser("digest-queue", help="Process queued fragments during idle/off-peak time.")
+    digest_queue.add_argument("--limit", type=int, default=10)
+    digest_queue.add_argument("--extractor", choices=["rules", "ollama"], default="rules")
+    digest_queue.add_argument("--model", default="qwen3:1.7b", help="Local Ollama model for --extractor ollama.")
+    digest_queue.add_argument("--ollama-host", default="http://127.0.0.1:11434")
+    digest_queue.add_argument("--ollama-timeout-s", type=int, default=60)
+    digest_queue.add_argument("--ollama-num-predict", type=int, default=220)
+    digest_queue.add_argument("--min-confidence", type=float, default=0.55)
+    digest_queue.add_argument("--skip-rebuild-edges", action="store_true")
+
+    sub.add_parser("queue-stats", help="Show background digestion queue status counts.")
+
     eval_extract = sub.add_parser("eval-extract", help="Build an extraction eval sheet from chat sources.")
     eval_extract.add_argument("--input", action="append", default=[], help="JSON/JSONL file or directory to sample.")
     eval_extract.add_argument("--source", action="append", default=[], help="Auto-detected source family or label.")
@@ -138,6 +162,8 @@ def main(argv: list[str] | None = None) -> int:
     eval_extract.add_argument("--extractor", choices=["rules", "ollama"], default="rules")
     eval_extract.add_argument("--model", default="qwen3:1.7b", help="Local Ollama model for --extractor ollama.")
     eval_extract.add_argument("--ollama-host", default="http://127.0.0.1:11434")
+    eval_extract.add_argument("--ollama-timeout-s", type=int, default=60)
+    eval_extract.add_argument("--ollama-num-predict", type=int, default=220)
     eval_extract.add_argument("--min-confidence", type=float, default=0.55)
 
     eval_score = sub.add_parser("eval-score", help="Summarize a filled extraction eval JSONL sheet.")
@@ -192,6 +218,8 @@ def main(argv: list[str] | None = None) -> int:
             extractor = OllamaExtractor(
                 model=args.model,
                 host=args.ollama_host,
+                timeout_s=args.ollama_timeout_s,
+                num_predict=args.ollama_num_predict,
                 min_confidence=args.min_confidence,
             )
         atoms = extract_atoms_from_file(
@@ -214,6 +242,8 @@ def main(argv: list[str] | None = None) -> int:
             extractor = OllamaExtractor(
                 model=args.model,
                 host=args.ollama_host,
+                timeout_s=args.ollama_timeout_s,
+                num_predict=args.ollama_num_predict,
                 min_confidence=args.min_confidence,
             )
         try:
@@ -400,6 +430,58 @@ def main(argv: list[str] | None = None) -> int:
                 return 0
             time.sleep(max(1.0, args.interval_s))
 
+    if args.command == "queue-build":
+        source_candidates = sources_for_labels(args.source, home=args.home) if args.source else []
+        input_paths = [*args.input, *source_candidates]
+        files = expand_source_files(input_paths)
+        if not files:
+            print("No queue input. Use --input <path> or --source codex/claude/all.", file=sys.stderr)
+            return 2
+        fragments = collect_fragments_from_files(
+            files,
+            min_chars=args.min_chars,
+            max_turns=args.max_turns,
+        )
+        inserted = store.enqueue_fragments(fragments)
+        stats = store.queue_stats()
+        print(
+            f"Enqueued {inserted} fragments "
+            f"(pending={stats.get('pending', 0)} done={stats.get('done', 0)} "
+            f"skipped={stats.get('skipped', 0)} error={stats.get('error', 0)})."
+        )
+        return 0
+
+    if args.command == "digest-queue":
+        extractor = None
+        if args.extractor == "ollama":
+            extractor = OllamaExtractor(
+                model=args.model,
+                host=args.ollama_host,
+                timeout_s=args.ollama_timeout_s,
+                num_predict=args.ollama_num_predict,
+                min_confidence=args.min_confidence,
+            )
+        result = process_digest_queue(store, extractor=extractor, limit=args.limit)
+        edges = 0
+        if result.atoms_created and not args.skip_rebuild_edges:
+            edges = store.rebuild_edges()
+        stats = store.queue_stats()
+        print(
+            "Digest queue complete: "
+            f"processed={result.processed} atoms_created={result.atoms_created} "
+            f"skipped={result.skipped} errors={result.errors} edges={edges} "
+            f"pending={stats.get('pending', 0)}"
+        )
+        return 0
+
+    if args.command == "queue-stats":
+        stats = store.queue_stats()
+        print(
+            f"pending={stats.get('pending', 0)} done={stats.get('done', 0)} "
+            f"skipped={stats.get('skipped', 0)} error={stats.get('error', 0)}"
+        )
+        return 0
+
     if args.command == "eval-extract":
         source_candidates = sources_for_labels(args.source, home=args.home) if args.source else []
         input_paths = [*args.input, *[source.path for source in source_candidates]]
@@ -411,6 +493,8 @@ def main(argv: list[str] | None = None) -> int:
             extractor = OllamaExtractor(
                 model=args.model,
                 host=args.ollama_host,
+                timeout_s=args.ollama_timeout_s,
+                num_predict=args.ollama_num_predict,
                 min_confidence=args.min_confidence,
             )
         try:
