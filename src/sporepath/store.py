@@ -377,7 +377,54 @@ class MemoryStore:
                 ),
             )
             con.commit()
+        self.record_usage_event(
+            "inspire_run",
+            target_type="inspire_run",
+            target_id=run_id,
+            metadata={"question": question},
+        )
         return run_id
+
+    def record_usage_event(
+        self,
+        event: str,
+        *,
+        target_type: str = "",
+        target_id: str = "",
+        metadata: dict[str, object] | None = None,
+    ) -> str:
+        event_id = uuid.uuid4().hex[:16]
+        with closing(self._connect()) as con:
+            con.execute(
+                """
+                INSERT INTO usage_events (
+                    id, event, target_type, target_id, metadata, created_at
+                )
+                VALUES (?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    event_id,
+                    event,
+                    target_type,
+                    target_id,
+                    json.dumps(metadata or {}, ensure_ascii=False),
+                    _now(),
+                ),
+            )
+            con.commit()
+        return event_id
+
+    def usage_event_counts(self) -> dict[str, int]:
+        with closing(self._connect()) as con:
+            rows = con.execute(
+                """
+                SELECT event, COUNT(*) AS count
+                FROM usage_events
+                GROUP BY event
+                ORDER BY event
+                """
+            ).fetchall()
+        return {str(row["event"]): int(row["count"]) for row in rows}
 
     def latest_inspire_run_id(self) -> str | None:
         with closing(self._connect()) as con:
@@ -549,6 +596,17 @@ class MemoryStore:
                     )
             con.execute("UPDATE inspire_runs SET updated_at = ? WHERE id = ?", (now, run_id))
             con.commit()
+        self.record_usage_event(
+            "inspire_feedback",
+            target_type="inspire_run",
+            target_id=run_id,
+            metadata={
+                "status": normalized_status,
+                "atom_ids": ids,
+                "suggestion_id": normalized_suggestion_id or "",
+                "bridges_strengthened": len(bridges),
+            },
+        )
         return {
             "atoms_touched": len(ids) if normalized_status in POSITIVE_INSPIRE_STATUSES else 0,
             "bridges_strengthened": len(bridges),
@@ -725,6 +783,18 @@ class MemoryStore:
                     cited_atom_ids TEXT NOT NULL,
                     created_at TEXT NOT NULL,
                     PRIMARY KEY (run_id, suggestion_id)
+                )
+                """
+            )
+            con.execute(
+                """
+                CREATE TABLE IF NOT EXISTS usage_events (
+                    id TEXT PRIMARY KEY,
+                    event TEXT NOT NULL,
+                    target_type TEXT NOT NULL,
+                    target_id TEXT NOT NULL,
+                    metadata TEXT NOT NULL,
+                    created_at TEXT NOT NULL
                 )
                 """
             )

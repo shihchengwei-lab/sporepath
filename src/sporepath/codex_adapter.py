@@ -24,26 +24,37 @@ def build_inspiration_prompt(
 ) -> str:
     focus_block = "\n".join(_format_atom(atom) for atom in focus_atoms) or "(none)"
     latent_block = "\n".join(_format_atom(atom) for atom in latent_atoms) or "(none)"
-    return f"""你是這個 PoC 的創意橋接器，不是筆記摘要器。
+    return f"""You are Sporepath's inspiration bridge, not a note summarizer.
 
-當前卡住的問題：
+Current stuck question:
 {question}
 
-當前加粗的專注路徑：
+Focus paths that are currently thick:
 {focus_block}
 
-沉到潛意識、但可能被重新喚醒的候選片段：
+Latent candidates that have low activation but may become useful now:
 {latent_block}
 
-請輸出 3 個「怪但有橋」的下一手。規則：
-- 不要泛泛聯想，不要吹捧，不要把候選片段硬湊成漂亮話。
-- 每一手都要引用至少一個候選片段的 id 或 source。
-- 說清楚：舊片段、為什麼現在可能重新有用、跟當前問題的橋、下一步怎麼驗證。
-- 如果候選片段都沒用，直接說不夠好，並說需要什麼資料。
+Write exactly 3 weird-but-bridged next moves.
 
-請讓每一手都包含這兩個欄位，方便之後把你選中的橋加粗：
+Rules:
+- Do not summarize the notes.
+- Do not give generic advice such as "do user interviews" unless a cited atom
+  makes that move non-obvious.
+- Every suggestion must cite at least one candidate atom id in `cited_atom_ids`.
+- Prefer a useful weak bridge over the most similar memory.
+- Explain why the old atom matters now and what concrete next action it implies.
+- If the candidates are not enough, say what evidence is missing instead of
+  inventing a bridge.
+
+Use this exact block format for each suggestion:
 suggestion_id: 1
 cited_atom_ids: [atom_id_1, atom_id_2]
+title: ...
+bridge: ...
+why_now: ...
+next_step: ...
+validation: ...
 """
 
 

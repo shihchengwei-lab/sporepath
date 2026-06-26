@@ -46,7 +46,8 @@ class CodexAdapterTests(unittest.TestCase):
         self.assertIn("PoC 要怎麼切", prompt)
         self.assertIn("會代謝的第二大腦", prompt)
         self.assertIn("神之一手來自弱連結", prompt)
-        self.assertIn("不要泛泛聯想", prompt)
+        self.assertIn("Do not summarize the notes", prompt)
+        self.assertIn("Use this exact block format", prompt)
 
     def test_prompt_includes_scout_metadata_and_feedback_fields(self):
         latent = [
@@ -82,6 +83,8 @@ class CodexAdapterTests(unittest.TestCase):
         self.assertIn("noise=[angry filler]", prompt)
         self.assertIn("suggestion_id", prompt)
         self.assertIn("cited_atom_ids", prompt)
+        self.assertIn("next_step:", prompt)
+        self.assertIn("validation:", prompt)
 
     def test_parse_inspiration_suggestions_reads_cited_atoms(self):
         output = """

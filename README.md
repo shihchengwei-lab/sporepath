@@ -477,6 +477,10 @@ python -m sporepath --db my_memory.sqlite inspire-feedback <run-id> `
 Positive feedback statuses are `selected`, `useful`, and `applied`. They thicken
 the selected atoms and add or strengthen an `inspire_feedback` bridge between
 them. `boring`, `wrong`, and `ignored` are recorded but do not thicken the path.
+Positive feedback should include a short `--note`; `validate-inspire` requires
+notes on most positive feedback so empty "useful" clicks do not qualify the
+workflow by themselves. Inspire runs and feedback also write local
+`usage_events` rows as an auditable trail.
 
 ## Graph
 
@@ -591,7 +595,8 @@ three narrower checks:
 - **Note usability**: digested notes are not empty, keep their source anchors,
   and do not collapse into duplicate titles.
 - **Inspire feedback**: `inspire` runs produce suggestions that you actually
-  mark as useful often enough to justify the workflow.
+  mark as useful often enough to justify the workflow. Positive feedback needs
+  a short reason note, not just a bare click.
 
 Run the checks separately:
 

@@ -275,6 +275,7 @@ class SporepathApp(Frame):
             run_id,
             suggestion_id=suggestion_id,
             status="useful",
+            note="marked useful from desktop app",
         )
         return (
             "Inspire feedback recorded.\n"

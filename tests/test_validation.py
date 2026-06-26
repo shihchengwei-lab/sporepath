@@ -226,14 +226,50 @@ class ValidationTests(unittest.TestCase):
                     }
                 ],
             )
-            store.apply_inspire_feedback(run_id, suggestion_id="1", status="useful")
+            store.apply_inspire_feedback(
+                run_id,
+                suggestion_id="1",
+                status="useful",
+                note="This suggestion changed the next experiment.",
+            )
 
             result = validate_inspire(store)
 
         self.assertEqual(result.metrics["runs_count"], 1)
         self.assertEqual(result.metrics["suggestions_count"], 1)
         self.assertEqual(result.metrics["positive_feedback_count"], 1)
+        self.assertEqual(result.metrics["positive_feedback_with_note_count"], 1)
+        self.assertEqual(result.metrics["inspire_run_event_count"], 1)
+        self.assertEqual(result.metrics["inspire_feedback_event_count"], 1)
         self.assertEqual(result.verdict, "pass")
+
+    def test_validate_inspire_rejects_positive_feedback_without_note(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            store = MemoryStore(Path(tmp) / "memory.sqlite")
+            store.upsert_atoms([atom("focus", activation=0.8), atom("latent", activation=0.1)])
+            run_id = store.record_inspire_run(
+                question="How do I validate this?",
+                focus_atom_ids=["focus"],
+                latent_atom_ids=["latent"],
+                output_text="suggestion_id: 1",
+            )
+            store.record_inspire_suggestions(
+                run_id,
+                [
+                    {
+                        "suggestion_id": "1",
+                        "text": "Use the latent bridge.",
+                        "cited_atom_ids": ["focus", "latent"],
+                    }
+                ],
+            )
+            store.apply_inspire_feedback(run_id, suggestion_id="1", status="useful")
+
+            result = validate_inspire(store)
+
+        self.assertEqual(result.metrics["positive_feedback_count"], 1)
+        self.assertEqual(result.metrics["positive_feedback_with_note_count"], 0)
+        self.assertEqual(result.verdict, "fail")
 
     def test_validate_report_combines_sections(self):
         with tempfile.TemporaryDirectory() as tmp:
