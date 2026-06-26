@@ -82,6 +82,8 @@ The window still exposes the everyday actions:
 - **Import ArcRift**: import ArcRift `full_chats` from a selected SQLite DB, then rebuild notes, vault, and graph.
 - **Sync Vault**: treat edited Obsidian notes as usage feedback and thicken their source atoms.
 - **Open Vault**: open the Markdown vault folder for Obsidian.
+- **Queue Status**: show pending, done, skipped, and error counts for background digestion.
+- **Run Queue Batch**: enqueue the selected chat export or detected local sources, then process a small rules-baseline batch.
 - **Inspire**: enter a stuck question and ask Codex for weird-but-bridged next moves.
 - **Mark Useful**: enter a returned suggestion id and thicken the bridge that actually helped.
 
@@ -101,8 +103,22 @@ If you only want the off-peak queue worker:
 Run-Sporepath-Queue-Worker.bat
 ```
 
-It defaults to `qwen3.5:4b`, `00:00-07:00`, batch size `5`, and checks that
-Ollama and the model exist before starting.
+It defaults to `qwen3.5:4b`, `00:00-07:00`, batch size `5`, auto-feeds
+allowlisted local sources with `--source all`, refreshes the Obsidian vault and
+HTML graph after new atoms are created, and checks that Ollama and the model
+exist before starting.
+
+To start that worker automatically when Windows logs in, run:
+
+```text
+Install-Sporepath-Queue-Worker-Task.bat
+```
+
+To remove the scheduled task:
+
+```text
+Uninstall-Sporepath-Queue-Worker-Task.bat
+```
 
 If Chrome's extension manager is inconvenient, there are best-effort launchers:
 
@@ -218,14 +234,23 @@ python -m sporepath --db real_memory.sqlite digest-queue `
 
 Each fragment is checkpointed as `done`, `skipped`, or `error`, so an interrupted
 run can continue later without reprocessing finished items.
+If a model call failed, inspect and retry errors without opening SQLite:
+
+```powershell
+python -m sporepath --db real_memory.sqlite queue-errors
+python -m sporepath --db real_memory.sqlite queue-retry
+```
 
 To leave a worker running and only process the queue during off-peak hours:
 
 ```powershell
 python -m sporepath --db real_memory.sqlite queue-worker `
+  --source all `
   --off-peak 00:00-07:00 `
   --batch-size 5 `
   --interval-s 300 `
+  --vault "$env:USERPROFILE\Documents\Sporepath Vault" `
+  --graph real_graph.html `
   --extractor ollama `
   --model qwen3.5:4b `
   --ollama-timeout-s 180 `
@@ -233,6 +258,7 @@ python -m sporepath --db real_memory.sqlite queue-worker `
 ```
 
 Use `--once --run-now` to run one batch immediately for testing.
+`Run-Sporepath-Queue-Worker.bat` is the copy-paste version of this flow.
 
 ## ArcRift Companion Mode
 
@@ -496,6 +522,15 @@ python -m sporepath eval-extract --source codex --limit 20 `
   --out eval\qwen_eval.jsonl `
   --report eval\qwen_eval.md
 ```
+
+For the current middle-ground scout, run:
+
+```text
+Run-Sporepath-Qwen35-Eval.bat
+```
+
+That samples allowlisted local sources with `qwen3.5:4b` and writes
+`eval\qwen35_4b_eval.jsonl` plus `eval\qwen35_4b_eval.md`.
 
 After reviewing the Markdown, fill the `human` fields in the JSONL file, then
 summarize:

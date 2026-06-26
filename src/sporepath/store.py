@@ -283,6 +283,61 @@ class MemoryStore:
             for row in rows
         ]
 
+    def queue_errors(self, *, limit: int = 20) -> list[dict[str, object]]:
+        with closing(self._connect()) as con:
+            rows = con.execute(
+                """
+                SELECT id, source_file, source, role, text, timestamp, attempts, last_error, updated_at
+                FROM digest_queue
+                WHERE status = 'error'
+                ORDER BY updated_at DESC, id ASC
+                LIMIT ?
+                """,
+                (limit,),
+            ).fetchall()
+        return [
+            {
+                "id": row["id"],
+                "source_file": row["source_file"],
+                "source": row["source"],
+                "role": row["role"],
+                "text": row["text"],
+                "timestamp": row["timestamp"],
+                "attempts": row["attempts"],
+                "last_error": row["last_error"],
+                "updated_at": row["updated_at"],
+            }
+            for row in rows
+        ]
+
+    def reset_queue_errors(self, ids: Iterable[str] | None = None) -> int:
+        id_list = list(ids or [])
+        now = _now()
+        with closing(self._connect()) as con:
+            before = con.total_changes
+            if id_list:
+                placeholders = ", ".join("?" for _ in id_list)
+                con.execute(
+                    f"""
+                    UPDATE digest_queue
+                    SET status = 'pending', last_error = '', updated_at = ?
+                    WHERE status = 'error' AND id IN ({placeholders})
+                    """,
+                    (now, *id_list),
+                )
+            else:
+                con.execute(
+                    """
+                    UPDATE digest_queue
+                    SET status = 'pending', last_error = '', updated_at = ?
+                    WHERE status = 'error'
+                    """,
+                    (now,),
+                )
+            changed = con.total_changes - before
+            con.commit()
+        return changed
+
     def mark_queue_done(self, fragment_id: str, atom_id: str) -> None:
         self._mark_queue_status(fragment_id, "done", atom_id=atom_id)
 

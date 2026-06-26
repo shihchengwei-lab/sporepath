@@ -31,6 +31,56 @@ from .vault_export import export_obsidian_vault, sync_obsidian_vault
 DEFAULT_DB = Path("memory.sqlite")
 
 
+def _build_extractor(args):
+    if args.extractor != "ollama":
+        return None
+    return OllamaExtractor(
+        model=args.model,
+        host=args.ollama_host,
+        timeout_s=args.ollama_timeout_s,
+        num_predict=args.ollama_num_predict,
+        min_confidence=args.min_confidence,
+    )
+
+
+def _enqueue_queue_inputs(store: MemoryStore, args) -> int:
+    source_candidates = sources_for_labels(args.source, home=args.home) if args.source else []
+    input_paths = [*args.input, *source_candidates]
+    if not input_paths:
+        return 0
+    files = expand_source_files(input_paths)
+    fragments = collect_fragments_from_files(
+        files,
+        min_chars=args.min_chars,
+        max_turns=args.max_turns,
+    )
+    return store.enqueue_fragments(fragments)
+
+
+def _refresh_queue_outputs(store: MemoryStore, args, *, atoms_created: int) -> dict[str, object]:
+    result: dict[str, object] = {
+        "edges": 0,
+        "notes": 0,
+        "vault_notes": 0,
+        "graph": None,
+    }
+    if not atoms_created:
+        return result
+    if not getattr(args, "skip_rebuild_edges", False):
+        result["edges"] = store.rebuild_edges()
+    notes = build_notes_from_atoms(
+        store.list_atoms(),
+        min_atoms=args.min_note_atoms,
+        max_points=args.max_note_points,
+    )
+    result["notes"] = store.replace_notes(notes)
+    if args.vault and notes:
+        result["vault_notes"] = export_obsidian_vault(store, args.vault).notes_exported
+    if args.graph:
+        result["graph"] = export_graph_html(store, args.graph)
+    return result
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="sporepath")
     parser.add_argument("--db", default=str(DEFAULT_DB), help="SQLite memory database path.")
@@ -146,21 +196,38 @@ def main(argv: list[str] | None = None) -> int:
     digest_queue.add_argument("--ollama-num-predict", type=int, default=220)
     digest_queue.add_argument("--min-confidence", type=float, default=0.55)
     digest_queue.add_argument("--skip-rebuild-edges", action="store_true")
+    digest_queue.add_argument("--vault", default=None, help="Optional Obsidian vault output path to refresh after new atoms.")
+    digest_queue.add_argument("--graph", default=None, help="Optional graph HTML output path to refresh after new atoms.")
+    digest_queue.add_argument("--min-note-atoms", type=int, default=2)
+    digest_queue.add_argument("--max-note-points", type=int, default=5)
 
     queue_worker = sub.add_parser("queue-worker", help="Continuously process the digestion queue during an off-peak window.")
+    queue_worker.add_argument("--input", action="append", default=[], help="JSON/JSONL file or directory to collect into the queue each tick.")
+    queue_worker.add_argument("--source", action="append", default=[], help="Auto-detected source family or label to collect into the queue each tick.")
+    queue_worker.add_argument("--home", default=None, help="Override home directory for source detection.")
     queue_worker.add_argument("--off-peak", default="00:00-07:00", help="Allowed processing window, e.g. 00:00-07:00.")
     queue_worker.add_argument("--batch-size", type=int, default=5)
     queue_worker.add_argument("--interval-s", type=float, default=300.0)
     queue_worker.add_argument("--once", action="store_true", help="Run one scheduler tick and exit.")
     queue_worker.add_argument("--run-now", action="store_true", help="Ignore --off-peak for this run.")
+    queue_worker.add_argument("--min-chars", type=int, default=80)
+    queue_worker.add_argument("--max-turns", type=int, default=None)
     queue_worker.add_argument("--extractor", choices=["rules", "ollama"], default="rules")
     queue_worker.add_argument("--model", default="qwen3:1.7b", help="Local Ollama model for --extractor ollama.")
     queue_worker.add_argument("--ollama-host", default="http://127.0.0.1:11434")
     queue_worker.add_argument("--ollama-timeout-s", type=int, default=60)
     queue_worker.add_argument("--ollama-num-predict", type=int, default=220)
     queue_worker.add_argument("--min-confidence", type=float, default=0.55)
+    queue_worker.add_argument("--vault", default=None, help="Optional Obsidian vault output path to refresh after new atoms.")
+    queue_worker.add_argument("--graph", default=None, help="Optional graph HTML output path to refresh after new atoms.")
+    queue_worker.add_argument("--min-note-atoms", type=int, default=2)
+    queue_worker.add_argument("--max-note-points", type=int, default=5)
 
     sub.add_parser("queue-stats", help="Show background digestion queue status counts.")
+    queue_errors = sub.add_parser("queue-errors", help="List queued fragments that failed extraction.")
+    queue_errors.add_argument("--limit", type=int, default=20)
+    queue_retry = sub.add_parser("queue-retry", help="Move failed queue fragments back to pending.")
+    queue_retry.add_argument("ids", nargs="*", help="Optional fragment ids. If omitted, all error fragments are retried.")
 
     eval_extract = sub.add_parser("eval-extract", help="Build an extraction eval sheet from chat sources.")
     eval_extract.add_argument("--input", action="append", default=[], help="JSON/JSONL file or directory to sample.")
@@ -466,56 +533,45 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     if args.command == "digest-queue":
-        extractor = None
-        if args.extractor == "ollama":
-            extractor = OllamaExtractor(
-                model=args.model,
-                host=args.ollama_host,
-                timeout_s=args.ollama_timeout_s,
-                num_predict=args.ollama_num_predict,
-                min_confidence=args.min_confidence,
-            )
+        extractor = _build_extractor(args)
         result = process_digest_queue(store, extractor=extractor, limit=args.limit)
-        edges = 0
-        if result.atoms_created and not args.skip_rebuild_edges:
-            edges = store.rebuild_edges()
+        refreshed = _refresh_queue_outputs(store, args, atoms_created=result.atoms_created)
         stats = store.queue_stats()
         print(
             "Digest queue complete: "
             f"processed={result.processed} atoms_created={result.atoms_created} "
-            f"skipped={result.skipped} errors={result.errors} edges={edges} "
+            f"skipped={result.skipped} errors={result.errors} edges={refreshed['edges']} "
+            f"notes={refreshed['notes']} vault_notes={refreshed['vault_notes']} "
             f"pending={stats.get('pending', 0)}"
         )
+        if refreshed["graph"]:
+            print(f"Graph: {Path(refreshed['graph']).resolve()}")
         return 0
 
     if args.command == "queue-worker":
-        extractor = None
-        if args.extractor == "ollama":
-            extractor = OllamaExtractor(
-                model=args.model,
-                host=args.ollama_host,
-                timeout_s=args.ollama_timeout_s,
-                num_predict=args.ollama_num_predict,
-                min_confidence=args.min_confidence,
-            )
+        extractor = _build_extractor(args)
         while True:
+            enqueued = _enqueue_queue_inputs(store, args)
             now = datetime.now().time()
             should_run = args.run_now or is_off_peak_window(now, args.off_peak)
             if should_run:
                 result = process_digest_queue(store, extractor=extractor, limit=args.batch_size)
-                edges = store.rebuild_edges() if result.atoms_created else 0
+                refreshed = _refresh_queue_outputs(store, args, atoms_created=result.atoms_created)
                 stats = store.queue_stats()
                 print(
                     "worker_tick=processed "
-                    f"processed={result.processed} atoms_created={result.atoms_created} "
-                    f"skipped={result.skipped} errors={result.errors} edges={edges} "
+                    f"enqueued={enqueued} processed={result.processed} atoms_created={result.atoms_created} "
+                    f"skipped={result.skipped} errors={result.errors} edges={refreshed['edges']} "
+                    f"notes={refreshed['notes']} vault_notes={refreshed['vault_notes']} "
                     f"pending={stats.get('pending', 0)}"
                 )
+                if refreshed["graph"]:
+                    print(f"Graph: {Path(refreshed['graph']).resolve()}")
             else:
                 stats = store.queue_stats()
                 print(
                     "worker_tick=idle "
-                    f"off_peak={args.off_peak} pending={stats.get('pending', 0)}"
+                    f"off_peak={args.off_peak} enqueued={enqueued} pending={stats.get('pending', 0)}"
                 )
             sys.stdout.flush()
             if args.once:
@@ -527,6 +583,28 @@ def main(argv: list[str] | None = None) -> int:
         print(
             f"pending={stats.get('pending', 0)} done={stats.get('done', 0)} "
             f"skipped={stats.get('skipped', 0)} error={stats.get('error', 0)}"
+        )
+        return 0
+
+    if args.command == "queue-errors":
+        errors = store.queue_errors(limit=args.limit)
+        if not errors:
+            print("No queue errors.")
+            return 0
+        for row in errors:
+            text = str(row["text"]).replace("\n", " ")[:120]
+            print(
+                f"{row['id']}\tattempts={row['attempts']}\t"
+                f"source={row['source']}\terror={row['last_error']}\ttext={text}"
+            )
+        return 0
+
+    if args.command == "queue-retry":
+        changed = store.reset_queue_errors(args.ids or None)
+        stats = store.queue_stats()
+        print(
+            f"Requeued {changed} error fragments. "
+            f"pending={stats.get('pending', 0)} error={stats.get('error', 0)}"
         )
         return 0
 

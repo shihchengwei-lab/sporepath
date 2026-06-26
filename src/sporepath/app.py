@@ -8,10 +8,13 @@ from tkinter import BOTH, END, LEFT, RIGHT, Button, Entry, Frame, Label, StringV
 from .app_config import AppConfig
 from .automation import sync_arcrift_memory
 from .codex_adapter import build_inspiration_prompt, parse_inspiration_suggestions, run_codex_exec
+from .digest_queue import collect_fragments_from_files, process_digest_queue
+from .graph_export import export_graph_html
+from .notes import build_notes_from_atoms
 from .refresh import refresh_memory
 from .source_discovery import discover_sources
 from .store import MemoryStore
-from .vault_export import sync_obsidian_vault
+from .vault_export import export_obsidian_vault, sync_obsidian_vault
 
 
 def run_app(config: AppConfig) -> None:
@@ -52,6 +55,8 @@ class SporepathApp(Frame):
         Button(button_row, text="Refresh Now", command=self.refresh_now).pack(side=LEFT, padx=(0, 8))
         Button(button_row, text="Sync Vault", command=self.sync_vault).pack(side=LEFT, padx=(0, 8))
         Button(button_row, text="Open Vault", command=self.open_vault).pack(side=LEFT, padx=(0, 8))
+        Button(button_row, text="Queue Status", command=self.queue_status).pack(side=LEFT, padx=(0, 8))
+        Button(button_row, text="Run Queue Batch", command=self.run_queue_batch).pack(side=LEFT)
 
         Label(self, text="Question for Inspire").pack(anchor="w")
         self.question = Text(self, height=5, wrap="word")
@@ -123,6 +128,12 @@ class SporepathApp(Frame):
     def inspire(self) -> None:
         self._run_background(self._inspire_worker)
 
+    def queue_status(self) -> None:
+        self._run_background(self._queue_status_worker)
+
+    def run_queue_batch(self) -> None:
+        self._run_background(self._queue_batch_worker)
+
     def mark_inspire_useful(self) -> None:
         run_id = self.last_inspire_run_id
         suggestion_id = self.suggestion_var.get().strip()
@@ -150,6 +161,51 @@ class SporepathApp(Frame):
         return (
             "Vault sync complete.\n"
             f"modified_notes={result.notes_touched} touched_atoms={result.atoms_touched}\n"
+        )
+
+    def _queue_status_worker(self) -> str:
+        store = MemoryStore(self.db_var.get())
+        stats = store.queue_stats()
+        lines = [
+            "Queue status.",
+            f"pending={stats.get('pending', 0)} done={stats.get('done', 0)} "
+            f"skipped={stats.get('skipped', 0)} error={stats.get('error', 0)}",
+        ]
+        errors = store.queue_errors(limit=3)
+        if errors:
+            lines.append("Recent errors:")
+            for row in errors:
+                lines.append(f"- {row['id']}: {row['last_error']}")
+        return "\n".join(lines) + "\n"
+
+    def _queue_batch_worker(self) -> str:
+        store = MemoryStore(self.db_var.get())
+        input_text = self.input_var.get().strip()
+        input_paths = [Path(input_text)] if input_text else self.detected_source_paths
+        enqueued = 0
+        if input_paths:
+            fragments = collect_fragments_from_files(input_paths, min_chars=80)
+            enqueued = store.enqueue_fragments(fragments)
+
+        result = process_digest_queue(store, extractor=None, limit=5)
+        edges = 0
+        notes_built = 0
+        vault_notes = 0
+        graph_written = None
+        if result.atoms_created:
+            edges = store.rebuild_edges()
+            notes = build_notes_from_atoms(store.list_atoms())
+            notes_built = store.replace_notes(notes)
+            if notes:
+                vault_notes = export_obsidian_vault(store, self.vault_var.get()).notes_exported
+            graph_written = export_graph_html(store, self.graph_var.get())
+        stats = store.queue_stats()
+        return (
+            "Queue batch complete.\n"
+            f"enqueued={enqueued} processed={result.processed} atoms_created={result.atoms_created} "
+            f"skipped={result.skipped} errors={result.errors} edges={edges} "
+            f"notes={notes_built} vault_notes={vault_notes} pending={stats.get('pending', 0)}\n"
+            f"graph={Path(graph_written).resolve() if graph_written else '(not written)'}\n"
         )
 
     def _arcrift_worker(self) -> str:

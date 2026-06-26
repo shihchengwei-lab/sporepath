@@ -195,6 +195,96 @@ class CliTests(unittest.TestCase):
         self.assertEqual(stats["done"], 1)
         self.assertEqual(stats["pending"], 1)
 
+    def test_queue_worker_can_auto_feed_and_refresh_outputs(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            db = Path(tmp) / "memory.sqlite"
+            chat = Path(tmp) / "chat.jsonl"
+            vault = Path(tmp) / "Vault"
+            graph = Path(tmp) / "graph.html"
+            chat.write_text(
+                "\n".join(
+                    [
+                        json.dumps({"role": "user", "content": "worker should queue this reusable idea"}, ensure_ascii=False),
+                        json.dumps({"role": "user", "content": "worker should leave this second idea pending"}, ensure_ascii=False),
+                    ]
+                ),
+                encoding="utf-8",
+            )
+
+            out = io.StringIO()
+            with redirect_stdout(out):
+                code = main(
+                    [
+                        "--db",
+                        str(db),
+                        "queue-worker",
+                        "--once",
+                        "--run-now",
+                        "--input",
+                        str(chat),
+                        "--min-chars",
+                        "5",
+                        "--extractor",
+                        "rules",
+                        "--batch-size",
+                        "1",
+                        "--vault",
+                        str(vault),
+                        "--graph",
+                        str(graph),
+                        "--min-note-atoms",
+                        "1",
+                    ]
+                )
+            store = MemoryStore(db)
+            stats = store.queue_stats()
+            notes = store.list_notes()
+            graph_exists = graph.exists()
+            vault_notes = list(vault.rglob("*.md"))
+
+        self.assertEqual(code, 0)
+        self.assertEqual(stats["done"], 1)
+        self.assertEqual(stats["pending"], 1)
+        self.assertTrue(notes)
+        self.assertTrue(graph_exists)
+        self.assertTrue(vault_notes)
+        self.assertIn("enqueued=2", out.getvalue())
+        self.assertIn("notes=", out.getvalue())
+        self.assertIn("vault_notes=", out.getvalue())
+
+    def test_queue_errors_and_retry_commands(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            db = Path(tmp) / "memory.sqlite"
+            store = MemoryStore(db)
+            store.enqueue_fragments(
+                [
+                    {
+                        "id": "frag-error",
+                        "source_file": "chat.jsonl",
+                        "source": "chat.jsonl:line[1]",
+                        "role": "user",
+                        "text": "this fragment failed once",
+                        "timestamp": None,
+                    }
+                ]
+            )
+            store.mark_queue_error("frag-error", "model timeout")
+
+            out = io.StringIO()
+            with redirect_stdout(out):
+                errors_code = main(["--db", str(db), "queue-errors", "--limit", "5"])
+            with redirect_stdout(out):
+                retry_code = main(["--db", str(db), "queue-retry", "frag-error"])
+            stats = store.queue_stats()
+
+        self.assertEqual(errors_code, 0)
+        self.assertEqual(retry_code, 0)
+        self.assertIn("frag-error", out.getvalue())
+        self.assertIn("model timeout", out.getvalue())
+        self.assertIn("Requeued 1 error fragments", out.getvalue())
+        self.assertEqual(stats.get("error", 0), 0)
+        self.assertEqual(stats["pending"], 1)
+
     def test_inspire_feedback_command_strengthens_selected_atoms(self):
         with tempfile.TemporaryDirectory() as tmp:
             db = Path(tmp) / "memory.sqlite"

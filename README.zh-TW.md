@@ -67,7 +67,19 @@ Start-ArcRift.bat
 Run-Sporepath-Queue-Worker.bat
 ```
 
-預設會用 `qwen3.5:4b`、`00:00-07:00`、每批 `5` 筆。啟動前會先檢查 Ollama 和模型是否存在，避免模型沒裝時把 queue 項目標成錯誤。
+預設會用 `qwen3.5:4b`、`00:00-07:00`、每批 `5` 筆，並用 `--source all` 自動收白名單裡的本地 Codex/Claude/jsonl 對話來源。處理出新 atoms 後，也會刷新 Obsidian vault 和 HTML graph。啟動前會先檢查 Ollama 和模型是否存在，避免模型沒裝時把 queue 項目標成錯誤。
+
+如果想讓 Windows 登入時自動啟動這個 worker，可以執行：
+
+```text
+Install-Sporepath-Queue-Worker-Task.bat
+```
+
+要移除排程：
+
+```text
+Uninstall-Sporepath-Queue-Worker-Task.bat
+```
 
 如果不想手動進 Chrome extension manager，可以試試這兩個 best-effort launcher：
 
@@ -92,6 +104,8 @@ Launch-ArcRift-Logged-In-Chrome.bat
 - **Import ArcRift**：從指定 SQLite DB 匯入 ArcRift `full_chats`，然後重建 notes、vault 和 graph。
 - **Sync Vault**：把 Obsidian 裡改過的 notes 視為使用回饋，回流加粗 source atoms。
 - **Open Vault**：打開 Markdown vault 資料夾，讓 Obsidian 使用。
+- **Queue Status**：查看背景消化 queue 的 pending、done、skipped、error 數量。
+- **Run Queue Batch**：把目前聊天匯出檔或已偵測來源補進 queue，然後用 rules baseline 手動處理一小批。
 - **Inspire**：輸入卡住的問題，請 Codex 產生「怪但有橋」的下一手。
 - **Mark Useful**：輸入某個 `suggestion_id`，把真的有幫助的靈感橋加粗。
 
@@ -230,16 +244,26 @@ python -m sporepath --db real_memory.sqlite digest-queue `
 
 ```powershell
 python -m sporepath --db real_memory.sqlite queue-worker `
+  --source all `
   --off-peak 00:00-07:00 `
   --batch-size 5 `
   --interval-s 300 `
+  --vault "$env:USERPROFILE\Documents\Sporepath Vault" `
+  --graph real_graph.html `
   --extractor ollama `
   --model qwen3.5:4b `
   --ollama-timeout-s 180 `
   --ollama-num-predict 320
 ```
 
-要測試時可以加 `--once --run-now`，立刻跑一批就結束。
+每個片段都會 checkpoint 成 `done`、`skipped` 或 `error`。如果模型呼叫失敗，可以不用打開 SQLite，直接查看和重排：
+
+```powershell
+python -m sporepath --db real_memory.sqlite queue-errors
+python -m sporepath --db real_memory.sqlite queue-retry
+```
+
+要測試時可以加 `--once --run-now`，立刻跑一批就結束。`Run-Sporepath-Queue-Worker.bat` 是這段流程的可雙擊版本。
 
 ## 代謝後的筆記
 
@@ -426,6 +450,14 @@ python -m sporepath eval-extract --source codex --limit 20 `
   --out eval\qwen_eval.jsonl `
   --report eval\qwen_eval.md
 ```
+
+目前要測中庸一點的 scout，可以直接跑：
+
+```text
+Run-Sporepath-Qwen35-Eval.bat
+```
+
+它會用 `qwen3.5:4b` 從白名單本地來源抽樣，輸出 `eval\qwen35_4b_eval.jsonl` 和 `eval\qwen35_4b_eval.md`。
 
 看完 Markdown 後，把 JSONL 裡的 `human` 欄位補上，再統計：
 

@@ -53,12 +53,38 @@ class LauncherTests(unittest.TestCase):
         text = launcher.read_text(encoding="utf-8")
 
         self.assertIn("queue-worker", text)
+        self.assertIn("--source all", text)
+        self.assertIn("--vault", text)
+        self.assertIn("--graph", text)
         self.assertIn("qwen3.5:4b", text)
         self.assertIn("--off-peak", text)
         self.assertIn("00:00-07:00", text)
         self.assertIn("--ollama-timeout-s", text)
         self.assertIn("--ollama-num-predict", text)
         self.assertIn("ollama list", text)
+
+    def test_task_scheduler_scripts_register_queue_worker(self):
+        install = ROOT / "Install-Sporepath-Queue-Worker-Task.bat"
+        uninstall = ROOT / "Uninstall-Sporepath-Queue-Worker-Task.bat"
+        install_text = install.read_text(encoding="utf-8")
+        uninstall_text = uninstall.read_text(encoding="utf-8")
+
+        self.assertIn("schtasks", install_text)
+        self.assertIn("/Create", install_text)
+        self.assertIn("/SC ONLOGON", install_text)
+        self.assertIn("Run-Sporepath-Queue-Worker.bat", install_text)
+        self.assertIn("schtasks", uninstall_text)
+        self.assertIn("/Delete", uninstall_text)
+        self.assertIn("Sporepath Queue Worker", uninstall_text)
+
+    def test_qwen35_eval_launcher_exists(self):
+        launcher = ROOT / "Run-Sporepath-Qwen35-Eval.bat"
+        text = launcher.read_text(encoding="utf-8")
+
+        self.assertIn("eval-extract", text)
+        self.assertIn("--source all", text)
+        self.assertIn("qwen3.5:4b", text)
+        self.assertIn("eval\\qwen35_4b_eval.jsonl", text)
 
     def test_auto_launcher_starts_queue_worker(self):
         launcher = ROOT / "Sporepath-Auto.bat"

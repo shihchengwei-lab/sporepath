@@ -101,12 +101,21 @@ class DigestQueueTests(unittest.TestCase):
 
             result = process_digest_queue(store, extractor=FlakyExtractor(), limit=10)
             stats = store.queue_stats()
+            errors = store.queue_errors()
+            reset_count = store.reset_queue_errors([errors[0]["id"]])
+            retried_stats = store.queue_stats()
 
         self.assertEqual(result.processed, 2)
         self.assertEqual(result.errors, 1)
         self.assertEqual(result.atoms_created, 1)
         self.assertEqual(stats["error"], 1)
         self.assertEqual(stats["done"], 1)
+        self.assertEqual(len(errors), 1)
+        self.assertEqual(errors[0]["last_error"], "model failed")
+        self.assertEqual(reset_count, 1)
+        self.assertEqual(retried_stats.get("error", 0), 0)
+        self.assertEqual(retried_stats["pending"], 1)
+        self.assertEqual(retried_stats["done"], 1)
 
 
 if __name__ == "__main__":
