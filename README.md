@@ -536,6 +536,11 @@ python -m sporepath eval-extract --source codex --limit 20 `
   --report eval\qwen_eval.md
 ```
 
+Ollama eval runs a small JSON canary before sampling. If the model returns
+degenerate output or invalid JSON, Sporepath stops before spending time on a
+noisy sheet. Use `--skip-model-check` only when you intentionally want to debug
+raw model failures.
+
 For the current middle-ground scout, run:
 
 ```text

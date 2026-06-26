@@ -462,6 +462,8 @@ python -m sporepath eval-extract --source codex --limit 20 `
   --report eval\qwen_eval.md
 ```
 
+Ollama eval 會先跑一個很小的 JSON canary。如果模型吐出退化輸出或不能解析的 JSON，Sporepath 會先停下來，不會花時間產生整份雜訊 sheet。只有在你刻意要 debug 原始模型失敗時，才加 `--skip-model-check`。
+
 目前要測中庸一點的 scout，可以直接跑：
 
 ```text

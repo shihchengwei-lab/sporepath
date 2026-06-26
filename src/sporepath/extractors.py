@@ -58,6 +58,13 @@ class ExtractSignal:
     handoff: str = ""
 
 
+@dataclass(frozen=True)
+class ExtractorCheckResult:
+    ok: bool
+    reason: str
+    raw_preview: str = ""
+
+
 class Extractor(Protocol):
     def extract(self, text: str, role: str = "unknown") -> ExtractSignal:
         ...
@@ -81,6 +88,47 @@ class OllamaExtractor:
         self.min_confidence = min_confidence
         self.transport = transport or self._ollama_chat
 
+    def check_canary(self) -> ExtractorCheckResult:
+        payload = {
+            "model": self.model,
+            "stream": False,
+            "think": False,
+            "options": {
+                "temperature": 0.0,
+                "top_p": 0.8,
+                "num_predict": min(self.num_predict, 180),
+            },
+            "messages": [
+                {
+                    "role": "system",
+                    "content": "You are a chat-memory scout. Output exactly one JSON object and no markdown.",
+                },
+                {
+                    "role": "user",
+                    "content": build_extraction_prompt(
+                        "Add support for TSV input. Keep tests green.",
+                        role="user",
+                    ),
+                },
+            ],
+        }
+        try:
+            raw = self.transport(payload)
+            if is_degenerate_model_output(raw):
+                return ExtractorCheckResult(
+                    ok=False,
+                    reason="degenerate model output",
+                    raw_preview=raw.strip()[:120],
+                )
+            parse_signal_json(raw)
+        except Exception as exc:
+            return ExtractorCheckResult(
+                ok=False,
+                reason=str(exc),
+                raw_preview=raw.strip()[:120] if "raw" in locals() else "",
+            )
+        return ExtractorCheckResult(ok=True, reason="ok", raw_preview=raw.strip()[:120])
+
     def extract(self, text: str, role: str = "unknown") -> ExtractSignal:
         payload = {
             "model": self.model,
@@ -94,7 +142,7 @@ class OllamaExtractor:
             "messages": [
                 {
                     "role": "system",
-                    "content": "你是聊天記憶 scout。只輸出一個 JSON object。",
+                    "content": "You are a chat-memory scout. Output exactly one JSON object and no markdown.",
                 },
                 {
                     "role": "user",
@@ -103,6 +151,8 @@ class OllamaExtractor:
             ],
         }
         raw = self.transport(payload)
+        if is_degenerate_model_output(raw):
+            raise ValueError("degenerate model output")
         signal = parse_signal_json(raw)
         if signal.confidence < self.min_confidence:
             return ExtractSignal(
@@ -145,22 +195,34 @@ def build_extraction_prompt(text: str, *, role: str) -> str:
     return f"""fragment_text: {json.dumps(text, ensure_ascii=False)}
 role: {role}
 
-只輸出一個 JSON object，不要 markdown。
-判斷 fragment_text 是否值得留下給未來 digest / inspire 使用。
+Decide whether fragment_text is worth keeping for future memory use.
 
-keep=true：可重用想法、問題、決策、偏好、判斷框架、反對點、類比、技術坑。
-keep=false：寒暄、工具噪音、一次性進度、空泛 recap、沒有未來用途。
+Output exactly one JSON object with these fields:
+keep, route, kind, summary, signals, noise, handoff, tags, confidence, reason.
 
-route 選一個：debug, product, preference, idea, decision, research, writing, ops, other
-kind 選一個：idea, objection, decision, question, analogy, preference, taste, framework, bug_memory, note
+keep=true when the fragment contains a reusable idea, problem, decision,
+preference, judgment pattern, analogy, research lead, or technical pitfall.
+keep=false when it is disposable progress chatter, tool noise, a stale recap,
+empty status, or has no future use.
 
-summary 必須提到具體主題，盡量使用 fragment_text 裡的名詞。
-不要寫「未明確」、「需進一步分析」、「可能包含」這類逃避句。
-noise 只能列 fragment_text 原文裡真的該丟掉的字；沒有就 []，不要抄規則。
-handoff 必須說明未來哪種情境會用到這段記憶；不要寫 False、digest、inspire。
+route must be one of:
+debug, product, preference, idea, decision, research, writing, ops, other.
 
-JSON 欄位：
-keep, route, kind, summary, signals, noise, handoff, tags, confidence, reason
+kind must be one of:
+idea, objection, decision, question, analogy, preference, taste, framework,
+bug_memory, note.
+
+summary must name the concrete subject in fragment_text. Do not write vague
+phrases like "unclear", "needs more analysis", or "may contain".
+
+signals must list up to five reusable facts or judgments from fragment_text.
+noise must list only exact disposable words or spans from fragment_text; use []
+if there is no noise. Do not invent noise.
+
+handoff must explain when this memory would help in the future. Do not mention
+"digest" or "inspire" in handoff.
+
+confidence must be between 0 and 1.
 """
 
 
@@ -199,6 +261,13 @@ def parse_signal_json(raw: str) -> ExtractSignal:
     )
 
 
+def is_degenerate_model_output(raw: str) -> bool:
+    text = raw.strip()
+    if len(text) < 8:
+        return False
+    return len(set(text)) == 1 and text[0].isdigit()
+
+
 def route_from_kind(kind: str) -> str:
     return KIND_TO_ROUTE.get(kind, "other")
 
@@ -208,11 +277,19 @@ def _loads_jsonish(raw: str) -> dict:
     fenced = re.search(r"```(?:json)?\s*(\{.*?\})\s*```", text, flags=re.DOTALL)
     if fenced:
         text = fenced.group(1)
-    else:
-        start = text.find("{")
-        end = text.rfind("}")
-        if start >= 0 and end > start:
-            text = text[start : end + 1]
+    decoder = json.JSONDecoder()
+    errors: list[json.JSONDecodeError] = []
+    for match in re.finditer(r"\{", text):
+        try:
+            parsed, _end = decoder.raw_decode(text[match.start() :])
+        except json.JSONDecodeError as exc:
+            errors.append(exc)
+            continue
+        if isinstance(parsed, dict):
+            return parsed
+        raise ValueError("extractor output must be a JSON object")
+    if errors:
+        raise errors[0]
     parsed = json.loads(text)
     if not isinstance(parsed, dict):
         raise ValueError("extractor output must be a JSON object")

@@ -266,6 +266,7 @@ def main(argv: list[str] | None = None) -> int:
     eval_extract.add_argument("--ollama-timeout-s", type=int, default=60)
     eval_extract.add_argument("--ollama-num-predict", type=int, default=220)
     eval_extract.add_argument("--min-confidence", type=float, default=0.55)
+    eval_extract.add_argument("--skip-model-check", action="store_true", help="Skip the Ollama JSON canary check.")
 
     eval_score = sub.add_parser("eval-score", help="Summarize a filled extraction eval JSONL sheet.")
     eval_score.add_argument("path")
@@ -370,6 +371,15 @@ def main(argv: list[str] | None = None) -> int:
                 num_predict=args.ollama_num_predict,
                 min_confidence=args.min_confidence,
             )
+            if not args.skip_model_check:
+                check = extractor.check_canary()
+                if not check.ok:
+                    print(
+                        f"Model check failed for {args.model}: {check.reason}. "
+                        f"raw_preview={check.raw_preview!r}",
+                        file=sys.stderr,
+                    )
+                    return 2
         try:
             atoms = extract_atoms_from_arcrift_db(
                 args.path,

@@ -3,7 +3,13 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from sporepath.extractors import ExtractSignal, OllamaExtractor, build_extraction_prompt, parse_signal_json
+from sporepath.extractors import (
+    ExtractSignal,
+    OllamaExtractor,
+    build_extraction_prompt,
+    is_degenerate_model_output,
+    parse_signal_json,
+)
 from sporepath.ingest import extract_atoms_from_file
 
 
@@ -26,6 +32,41 @@ class ExtractorTests(unittest.TestCase):
         self.assertEqual(signal.kind, "framework")
         self.assertEqual(signal.tags, ["product-judgment", "friction"])
         self.assertGreater(signal.confidence, 0.8)
+
+    def test_parse_signal_json_accepts_prefixed_json_with_trailing_text(self):
+        raw = """
+        Here is the JSON:
+        {
+          "keep": true,
+          "route": "product",
+          "kind": "decision",
+          "summary": "Keep the product judgment.",
+          "signals": ["product judgment"],
+          "noise": [],
+          "handoff": "Use this when evaluating the same product tradeoff.",
+          "tags": ["product"],
+          "confidence": 0.81,
+          "reason": "reusable"
+        }
+        Extra explanation that should be ignored.
+        """
+
+        signal = parse_signal_json(raw)
+
+        self.assertTrue(signal.keep)
+        self.assertEqual(signal.route, "product")
+        self.assertEqual(signal.summary, "Keep the product judgment.")
+
+    def test_parse_signal_json_uses_first_complete_json_object(self):
+        raw = """{"keep": true, "kind": "idea", "summary": "first", "tags": ["one"], "confidence": 0.8}
+        {"keep": false, "kind": "note", "summary": "second", "tags": ["two"], "confidence": 0.1}
+        """
+
+        signal = parse_signal_json(raw)
+
+        self.assertTrue(signal.keep)
+        self.assertEqual(signal.summary, "first")
+        self.assertEqual(signal.tags, ["one"])
 
     def test_ollama_extractor_uses_transport_response(self):
         def fake_transport(_payload):
@@ -57,6 +98,18 @@ class ExtractorTests(unittest.TestCase):
         self.assertIn("抱怨語氣", signal.noise)
         self.assertEqual(signal.handoff, "玩家-facing 文案要白話，不要文言腔。")
         self.assertIn("player-facing", signal.tags)
+
+    def test_ollama_extractor_canary_rejects_degenerate_output(self):
+        extractor = OllamaExtractor(model="qwen3.5:4b", transport=lambda _payload: "000000000000000000")
+
+        result = extractor.check_canary()
+
+        self.assertFalse(result.ok)
+        self.assertIn("degenerate", result.reason)
+
+    def test_degenerate_model_output_detects_repeated_zeroes(self):
+        self.assertTrue(is_degenerate_model_output("000000000000000000"))
+        self.assertFalse(is_degenerate_model_output('{"keep": false}'))
 
     def test_parse_signal_json_accepts_scout_fields(self):
         raw = json.dumps(
@@ -113,11 +166,11 @@ class ExtractorTests(unittest.TestCase):
 
         self.assertIn("fragment_text:", prompt)
         self.assertIn("我在做一個第二大腦工具", prompt)
-        self.assertIn("summary 必須提到具體主題", prompt)
-        self.assertIn("不要寫「未明確」", prompt)
-        self.assertIn("noise 只能列 fragment_text 原文裡", prompt)
-        self.assertIn("handoff 必須說明未來哪種情境會用到", prompt)
-        self.assertLess(prompt.find("fragment_text:"), prompt.find("JSON 欄位"))
+        self.assertIn("Output exactly one JSON object", prompt)
+        self.assertIn("summary must name the concrete subject", prompt)
+        self.assertIn("noise must list only exact disposable words", prompt)
+        self.assertIn("handoff must explain when this memory would help", prompt)
+        self.assertLess(prompt.find("fragment_text:"), prompt.find("Output exactly one JSON object"))
         self.assertNotIn("<<<", prompt)
 
     def test_ingest_can_use_custom_extractor(self):
