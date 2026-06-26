@@ -11,5 +11,6 @@ set "SPOREPATH_GRAPH=real_graph.html"
 
 start "Sporepath ArcRift Watcher" /min "%~dp0Run-Sporepath-Watcher.bat"
 start "Sporepath Sources Watcher" /min "%~dp0Run-Sporepath-Sources-Watcher.bat"
+start "Sporepath Queue Worker" /min "%~dp0Run-Sporepath-Queue-Worker.bat"
 
 python -m sporepath --db "%SPOREPATH_DB%" app

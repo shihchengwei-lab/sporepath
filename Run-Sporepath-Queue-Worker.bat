@@ -1,0 +1,33 @@
+@echo off
+cd /d "%~dp0"
+
+set "PYTHONPATH=src"
+set "SPOREPATH_DB=real_memory.sqlite"
+set "SPOREPATH_QUEUE_MODEL=qwen3.5:4b"
+set "SPOREPATH_QUEUE_OFF_PEAK=22:00-07:00"
+set "SPOREPATH_QUEUE_BATCH=5"
+set "SPOREPATH_QUEUE_INTERVAL=300"
+set "SPOREPATH_OLLAMA_TIMEOUT=180"
+set "SPOREPATH_OLLAMA_NUM_PREDICT=320"
+
+where ollama >nul 2>nul
+if errorlevel 1 (
+  echo Ollama was not found on PATH. Queue worker will not start.
+  exit /b 2
+)
+
+ollama list | findstr /C:"%SPOREPATH_QUEUE_MODEL%" >nul
+if errorlevel 1 (
+  echo Model %SPOREPATH_QUEUE_MODEL% was not found.
+  echo Install it first: ollama pull %SPOREPATH_QUEUE_MODEL%
+  exit /b 2
+)
+
+python -m sporepath --db "%SPOREPATH_DB%" queue-worker ^
+  --off-peak "%SPOREPATH_QUEUE_OFF_PEAK%" ^
+  --batch-size "%SPOREPATH_QUEUE_BATCH%" ^
+  --interval-s "%SPOREPATH_QUEUE_INTERVAL%" ^
+  --extractor ollama ^
+  --model "%SPOREPATH_QUEUE_MODEL%" ^
+  --ollama-timeout-s "%SPOREPATH_OLLAMA_TIMEOUT%" ^
+  --ollama-num-predict "%SPOREPATH_OLLAMA_NUM_PREDICT%"

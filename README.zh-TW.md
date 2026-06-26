@@ -52,6 +52,7 @@ Sporepath.bat
 它現在會先啟動 ArcRift backend，再啟動最小化的 Sporepath watchers，最後打開 Sporepath 小視窗。
 
 - 本地 Codex / Claude / jsonl 來源會直接被 watcher 追蹤。檔案有變動時，Sporepath 會自動刷新 SQLite 記憶庫、digested notes、Obsidian vault 和 graph。
+- 背景消化 queue worker 會以最小化視窗啟動，只在設定的離峰時段處理 queued fragments。
 - 網頁聊天不再做背景自動抓取。你聊完 ChatGPT 或 Claude 網頁版之後，按 ArcRift popup 裡的 **Save Chat**。ArcRift 把聊天寫進 `ArcRift.db` 後，Sporepath 會走同一條管線把它變成本地筆記。
 
 如果只想啟動 ArcRift backend，可以執行：
@@ -59,6 +60,14 @@ Sporepath.bat
 ```text
 Start-ArcRift.bat
 ```
+
+如果只想啟動離峰 queue worker，可以執行：
+
+```text
+Run-Sporepath-Queue-Worker.bat
+```
+
+預設會用 `qwen3.5:4b`、`22:00-07:00`、每批 `5` 筆。啟動前會先檢查 Ollama 和模型是否存在，避免模型沒裝時把 queue 項目標成錯誤。
 
 如果不想手動進 Chrome extension manager，可以試試這兩個 best-effort launcher：
 

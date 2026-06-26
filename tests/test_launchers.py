@@ -48,6 +48,24 @@ class LauncherTests(unittest.TestCase):
 
         self.assertIn("Run-Sporepath-Sources-Watcher.bat", text)
 
+    def test_queue_worker_launcher_runs_off_peak_scout(self):
+        launcher = ROOT / "Run-Sporepath-Queue-Worker.bat"
+        text = launcher.read_text(encoding="utf-8")
+
+        self.assertIn("queue-worker", text)
+        self.assertIn("qwen3.5:4b", text)
+        self.assertIn("--off-peak", text)
+        self.assertIn("22:00-07:00", text)
+        self.assertIn("--ollama-timeout-s", text)
+        self.assertIn("--ollama-num-predict", text)
+        self.assertIn("ollama list", text)
+
+    def test_auto_launcher_starts_queue_worker(self):
+        launcher = ROOT / "Sporepath-Auto.bat"
+        text = launcher.read_text(encoding="utf-8")
+
+        self.assertIn("Run-Sporepath-Queue-Worker.bat", text)
+
 
 if __name__ == "__main__":
     unittest.main()

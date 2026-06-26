@@ -69,6 +69,8 @@ and opens the small local Sporepath window.
 - Local Codex/Claude/jsonl sources are watched directly. When those files
   change, Sporepath refreshes the SQLite memory, digested notes, Obsidian vault,
   and graph.
+- The background digestion queue worker is started minimized. It only processes
+  queued fragments during the configured off-peak window.
 - Web chats are intentionally not scraped in the background. After a ChatGPT or
   Claude web conversation, press ArcRift's popup **Save Chat** button. Once
   ArcRift writes the chat into `ArcRift.db`, Sporepath imports it through the
@@ -92,6 +94,15 @@ If you only want the backend without opening Sporepath:
 ```text
 Start-ArcRift.bat
 ```
+
+If you only want the off-peak queue worker:
+
+```text
+Run-Sporepath-Queue-Worker.bat
+```
+
+It defaults to `qwen3.5:4b`, `22:00-07:00`, batch size `5`, and checks that
+Ollama and the model exist before starting.
 
 If Chrome's extension manager is inconvenient, there are best-effort launchers:
 
